@@ -1,0 +1,13 @@
+{
+  "name": "evolution-survivor-minigame",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "watch": "tsc -w -p tsconfig.json",
+    "clean": "powershell -Command \"if (Test-Path dist) { Remove-Item -Recurse -Force dist }\""
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}

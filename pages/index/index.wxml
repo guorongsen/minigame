@@ -1,0 +1,4 @@
+﻿<view class="wrap">
+  <text class="title">Evolution Survivor</text>
+  <text class="desc">{{message}}</text>
+</view>
