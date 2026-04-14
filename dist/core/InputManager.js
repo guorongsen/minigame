@@ -16,6 +16,7 @@ class InputManager {
         this.moveVec = { x: 0, y: 0 };
         this.deadZone = 6;
         this.maxRadius = 60;
+        this.moveSensitivity = 1;
         this.sceneManager = sceneManager;
     }
     init() {
@@ -32,6 +33,12 @@ class InputManager {
     }
     getTouchPosition() {
         return { x: this.currentX, y: this.currentY };
+    }
+    setMoveSensitivity(value) {
+        if (!Number.isFinite(value)) {
+            return;
+        }
+        this.moveSensitivity = Math.max(0.7, Math.min(1.6, value));
     }
     handleTouchStart(event) {
         var _a;
@@ -68,9 +75,10 @@ class InputManager {
         }
         else {
             const clamped = (0, MathUtil_1.clamp)(len, 0, this.maxRadius);
+            const intensity = (0, MathUtil_1.clamp)((clamped / this.maxRadius) * this.moveSensitivity, 0, 1);
             this.moveVec = {
-                x: (dx / len) * (clamped / this.maxRadius),
-                y: (dy / len) * (clamped / this.maxRadius)
+                x: (dx / len) * intensity,
+                y: (dy / len) * intensity
             };
         }
         const scene = this.sceneManager.getCurrentScene();

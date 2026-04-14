@@ -26,31 +26,49 @@ export class DropSystem {
 
   update(dt: number, player: Player, pullSpeed: number): number {
     let collectedExp = 0;
+    const pullRadius = player.passives.pickupRange + 46;
+    const pullRadiusSq = pullRadius * pullRadius;
 
     for (let i = this.expOrbs.length - 1; i >= 0; i -= 1) {
       const orb = this.expOrbs[i];
       orb.life -= dt;
       if (orb.life <= 0) {
-        this.expOrbs.splice(i, 1);
+        this.removeOrbAt(i);
         continue;
       }
 
       const dx = player.x - orb.x;
       const dy = player.y - orb.y;
-      const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      let distSq = dx * dx + dy * dy;
 
-      if (dist <= player.passives.pickupRange + 46) {
+      if (distSq <= pullRadiusSq) {
+        const dist = Math.sqrt(distSq) || 1;
         orb.x += (dx / dist) * pullSpeed * dt;
         orb.y += (dy / dist) * pullSpeed * dt;
+        const ndx = player.x - orb.x;
+        const ndy = player.y - orb.y;
+        distSq = ndx * ndx + ndy * ndy;
       }
 
-      if (dist <= player.radius + orb.radius + 3) {
+      const pickupRadius = player.radius + orb.radius + 3;
+      if (distSq <= pickupRadius * pickupRadius) {
         collectedExp += orb.value;
-        this.expOrbs.splice(i, 1);
+        this.removeOrbAt(i);
       }
     }
 
     return collectedExp;
+  }
+
+  private removeOrbAt(index: number): void {
+    if (index < 0 || index >= this.expOrbs.length) {
+      return;
+    }
+    const last = this.expOrbs.length - 1;
+    if (index !== last) {
+      this.expOrbs[index] = this.expOrbs[last];
+    }
+    this.expOrbs.pop();
   }
 
   render(ctx: CanvasRenderingContext2D): void {

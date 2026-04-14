@@ -6,7 +6,11 @@ export class MainLoop {
   private lastTime = 0;
   private rafId = 0;
 
-  constructor(private readonly updateFn: (dt: number) => void, private readonly renderFn: () => void) {}
+  constructor(
+    private readonly updateFn: (dt: number) => void,
+    private readonly renderFn: () => void,
+    private readonly onFrameError?: (phase: "update" | "render", error: any) => void
+  ) {}
 
   start(): void {
     if (this.running) {
@@ -34,8 +38,17 @@ export class MainLoop {
     const dt = Math.min(0.05, Math.max(0.001, (now - this.lastTime) / 1000));
     this.lastTime = now;
 
-    this.updateFn(dt);
-    this.renderFn();
+    try {
+      this.updateFn(dt);
+    } catch (error) {
+      this.onFrameError?.("update", error);
+    }
+
+    try {
+      this.renderFn();
+    } catch (error) {
+      this.onFrameError?.("render", error);
+    }
 
     this.rafId = requestAnimationFrame(() => this.tick());
   }

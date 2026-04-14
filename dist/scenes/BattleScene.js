@@ -5,6 +5,7 @@ const Boss_1 = require("../entities/Boss");
 const Player_1 = require("../entities/Player");
 const AdManager_1 = require("../managers/AdManager");
 const AnalyticsManager_1 = require("../managers/AnalyticsManager");
+const AntiAddictionManager_1 = require("../managers/AntiAddictionManager");
 const ConfigManager_1 = require("../managers/ConfigManager");
 const SaveManager_1 = require("../managers/SaveManager");
 const ChestSystem_1 = require("../systems/ChestSystem");
@@ -34,7 +35,17 @@ class BattleScene {
         this.cfg = ConfigManager_1.ConfigManager.getInstance();
         this.save = SaveManager_1.SaveManager.getInstance();
         this.ad = AdManager_1.AdManager.getInstance();
+        this.anti = AntiAddictionManager_1.AntiAddictionManager.getInstance();
         this.analytics = AnalyticsManager_1.AnalyticsManager.getInstance();
+        this.floorCacheCanvas = null;
+        this.floorCacheMode = "";
+        this.floorCacheWidth = 0;
+        this.floorCacheHeight = 0;
+        this.floorCacheDisabled = false;
+        this.playerSpritePath = "assets/characters/char_player_main_v1.png";
+        this.playerSprite = null;
+        this.playerSpriteReady = false;
+        this.playerSpriteLoadFailed = false;
         this.cameraX = 0;
         this.cameraY = 0;
         this.enemies = [];
@@ -67,12 +78,20 @@ class BattleScene {
         this.chestBoosted = false;
         this.settleReward = 0;
         this.settleDoubled = false;
+        this.settleFragmentRewards = [];
+        this.settleStoryStars = 0;
+        this.settleStoryBestStars = 0;
+        this.settleStoryStarTargetKills = 0;
+        this.settleStoryChapterLevel = 0;
+        this.settleStoryFirstClearRewards = [];
         this.toast = "";
         this.toastColor = "#ffffff";
         this.toastTime = 0;
         this.adStateText = "";
         this.adStateTime = 0;
         this.damageFlashTime = 0;
+        this.pendingConfirmAction = "";
+        this.pendingConfirmTime = 0;
         this.evolutionHitStopTime = 0;
         this.evolutionFlashTime = 0;
         this.evolutionBannerTime = 0;
@@ -80,23 +99,47 @@ class BattleScene {
         this.evolutionBannerColor = "#ffffff";
         this.lobbyTab = "home";
         this.lobbyChestClaimed = false;
-        this.freeStartBuffCharges = 0;
+        this.weaponPage = 0;
+        this.encyclopediaPage = 0;
         this.selectedRunMode = "story";
+        this.selectedStoryChapterLevel = 1;
+        this.runningStoryChapterLevel = 1;
+        this.runningStoryChapterName = "净化前线";
         this.runningMode = "story";
         this.endlessBossBatchReached = 0;
         this.dailyChallengeCleared = false;
         this.dailyChallengeBonusReward = 0;
+        this.currentStageLevel = 1;
+        this.currentStageName = "新手区";
         this.storyFinalBossSpawned = false;
         this.storyFinalBossKilled = false;
         this.storyFinalBossId = 0;
         this.storyFinalBossWarningShown = false;
+        this.perfSampleSeconds = 0;
+        this.perfSampleFrames = 0;
+        this.perfSampleFrameMsSum = 0;
+        this.perfSampleWorstFrameMs = 0;
+        this.perfFps = 0;
+        this.perfAvgFrameMs = 0;
+        this.perfWorstFrameMs = 0;
+        this.perfUpdateMs = 0;
+        this.perfRenderMs = 0;
         const balance = this.cfg.getBalance();
         this.worldWidth = Math.max(this.width + 220, Math.floor(this.width * (balance.mapWidthMultiplier || 3.2)));
         this.worldHeight = Math.max(this.height + 320, Math.floor(this.height * (balance.mapHeightMultiplier || 3.2)));
         this.player = new Player_1.Player(this.worldWidth, this.worldHeight, this.cfg.getMaxWeaponsInRun());
+        this.loadPlayerSprite();
         this.enemySpawner = new EnemySpawner_1.EnemySpawner(this.width, this.height, this.worldWidth, this.worldHeight);
         this.enemySpawner.setObstacleChecker((x, y, radius) => this.obstacleSystem.isCircleBlocked(x, y, radius));
         this.activeDailyChallenge = this.dailyChallengeSystem.getTodayChallenge();
+        const chapters = this.getStoryChapters();
+        if (chapters.length > 0) {
+            const unlockedLevel = this.save.getUnlockedStoryChapterLevel();
+            const preferred = chapters.filter((item) => item.level <= unlockedLevel).pop() || chapters[0];
+            this.selectedStoryChapterLevel = preferred.level;
+            this.runningStoryChapterLevel = preferred.level;
+            this.runningStoryChapterName = preferred.name;
+        }
         this.analytics.load();
         this.adListener = (placement, state) => {
             this.analytics.logEvent("ad_state", {
@@ -116,346 +159,547 @@ class BattleScene {
         this.ad.addListener(this.adListener);
         this.updateCamera();
         this.syncLobbyMeta();
+        this.applySettingsToRuntime();
     }
     enter() {
         this.phase = "start";
         this.activeDailyChallenge = this.dailyChallengeSystem.getTodayChallenge();
+        const chapters = this.getStoryChapters();
+        if (chapters.length > 0 && !chapters.some((item) => item.level === this.selectedStoryChapterLevel)) {
+            const unlockedLevel = this.save.getUnlockedStoryChapterLevel();
+            const preferred = chapters.filter((item) => item.level <= unlockedLevel).pop() || chapters[0];
+            this.selectedStoryChapterLevel = preferred.level;
+        }
+        else if (chapters.length > 0 &&
+            !this.save.isStoryChapterUnlocked(this.selectedStoryChapterLevel)) {
+            const unlockedLevel = this.save.getUnlockedStoryChapterLevel();
+            const preferred = chapters.filter((item) => item.level <= unlockedLevel).pop() || chapters[0];
+            this.selectedStoryChapterLevel = preferred.level;
+        }
         this.syncLobbyMeta();
+        this.applySettingsToRuntime();
     }
     exit() {
         this.ad.removeListener(this.adListener);
     }
+    loadPlayerSprite() {
+        const image = this.createRuntimeImage();
+        if (!image) {
+            this.playerSpriteLoadFailed = true;
+            this.playerSpriteReady = false;
+            this.playerSprite = null;
+            return;
+        }
+        this.playerSprite = image;
+        this.playerSpriteReady = false;
+        this.playerSpriteLoadFailed = false;
+        image.onload = () => {
+            this.playerSpriteReady = true;
+            this.playerSpriteLoadFailed = false;
+        };
+        image.onerror = () => {
+            this.playerSpriteReady = false;
+            this.playerSpriteLoadFailed = true;
+            this.playerSprite = null;
+        };
+        image.src = this.playerSpritePath;
+    }
+    createRuntimeImage() {
+        try {
+            const rootCanvas = globalThis.canvas;
+            if (rootCanvas && typeof rootCanvas.createImage === "function") {
+                return rootCanvas.createImage();
+            }
+        }
+        catch (error) {
+            // Ignore and continue fallback.
+        }
+        try {
+            if (typeof wx !== "undefined" && wx && typeof wx.createImage === "function") {
+                return wx.createImage();
+            }
+        }
+        catch (error) {
+            // Ignore unsupported runtime.
+        }
+        return null;
+    }
     update(dt) {
-        if (this.toastTime > 0) {
-            this.toastTime -= dt;
-            if (this.toastTime <= 0) {
-                this.toast = "";
+        const debugPerfEnabled = this.save.getData().debugMode;
+        const updateStart = debugPerfEnabled ? Date.now() : 0;
+        try {
+            if (this.toastTime > 0) {
+                this.toastTime -= dt;
+                if (this.toastTime <= 0) {
+                    this.toast = "";
+                }
             }
-        }
-        if (this.adStateTime > 0) {
-            this.adStateTime -= dt;
-            if (this.adStateTime <= 0) {
-                this.adStateText = "";
+            if (this.adStateTime > 0) {
+                this.adStateTime -= dt;
+                if (this.adStateTime <= 0) {
+                    this.adStateText = "";
+                }
             }
-        }
-        if (this.damageFlashTime > 0) {
-            this.damageFlashTime -= dt;
-            if (this.damageFlashTime < 0) {
-                this.damageFlashTime = 0;
+            if (this.damageFlashTime > 0) {
+                this.damageFlashTime -= dt;
+                if (this.damageFlashTime < 0) {
+                    this.damageFlashTime = 0;
+                }
             }
-        }
-        this.tickEvolutionFeedback(dt);
-        if (this.phase !== "running") {
-            return;
-        }
-        if (this.evolutionHitStopTime > 0) {
-            return;
-        }
-        this.elapsedTime += dt;
-        if (!this.pityHintShown &&
-            !this.hasEvolvedThisRun &&
-            this.elapsedTime >= this.cfg.getBalance().evolutionPityHintTime) {
-            this.pityHintShown = true;
-            this.showToast("提示：优先拿元素和武器升级可更快进化", "#a5ddff");
-        }
-        if (this.runningMode === "story" && !this.storyFinalBossSpawned) {
-            const remain = this.getStoryClearTime() - this.elapsedTime;
-            const warnLead = this.cfg.getBalance().storyFinalBossWarnLeadTime || 16;
-            if (!this.storyFinalBossWarningShown && remain > 0 && remain <= warnLead) {
-                this.storyFinalBossWarningShown = true;
-                this.showToast(`最终首领将在 ${Math.ceil(remain)} 秒后降临`, "#ffb3c4");
+            if (this.pendingConfirmTime > 0) {
+                this.pendingConfirmTime -= dt;
+                if (this.pendingConfirmTime <= 0) {
+                    this.pendingConfirmTime = 0;
+                    this.pendingConfirmAction = "";
+                }
             }
-        }
-        this.player.update(dt, this.inputManager.getMoveVector());
-        this.obstacleSystem.resolveCircle(this.player, this.worldWidth, this.worldHeight);
-        this.updateCamera();
-        const spawnResult = this.enemySpawner.update(dt, this.elapsedTime, this.enemies, this.player.x, this.player.y);
-        if (spawnResult.bossSpawned) {
-            const spawnMode = spawnResult.mode || this.runningMode;
-            const bossBatch = spawnResult.bossBatch || 1;
-            this.analytics.logEvent("boss_spawned", {
-                time: this.elapsedTime,
-                mode: spawnMode,
-                batch: bossBatch
-            });
-            if (spawnMode === "endless") {
-                this.endlessBossBatchReached = Math.max(this.endlessBossBatchReached, bossBatch);
-                this.showToast(`无尽第${bossBatch}批首领来袭！`, "#ff6d6d");
+            this.tickEvolutionFeedback(dt);
+            if (this.phase !== "running") {
+                return;
             }
-            else if (spawnMode === "story") {
-                this.storyFinalBossSpawned = true;
-                this.storyFinalBossId = spawnResult.spawnedBossId || this.findLatestBossId();
-                this.enhanceStoryFinalBoss(this.storyFinalBossId);
-                this.showToast("最终首领来袭！", "#ff6d9e");
-                this.analytics.logEvent("story_final_boss_spawn", {
-                    bossId: this.storyFinalBossId,
+            if (this.evolutionHitStopTime > 0) {
+                return;
+            }
+            this.elapsedTime += dt;
+            const antiGate = this.anti.tickRun(dt);
+            if (!antiGate.ok) {
+                this.analytics.logEvent("anti_forced_settlement", {
+                    reason: antiGate.reason || "unknown",
+                    message: antiGate.message,
+                    time: this.elapsedTime,
+                    mode: this.runningMode
+                });
+                this.showToast(antiGate.message || "防沉迷限制，已结束本局", "#ffb8a6");
+                this.finalizeRun(false);
+                return;
+            }
+            if (!this.pityHintShown &&
+                !this.hasEvolvedThisRun &&
+                this.elapsedTime >= this.cfg.getBalance().evolutionPityHintTime) {
+                this.pityHintShown = true;
+                this.showToast("提示：优先拿元素和武器升级可更快进化", "#a5ddff");
+            }
+            if (this.runningMode === "story" && !this.storyFinalBossSpawned) {
+                const remain = this.getStoryClearTime() - this.elapsedTime;
+                const warnLead = this.cfg.getBalance().storyFinalBossWarnLeadTime || 16;
+                if (!this.storyFinalBossWarningShown && remain > 0 && remain <= warnLead) {
+                    this.storyFinalBossWarningShown = true;
+                    this.showToast(`最终首领将在 ${Math.ceil(remain)} 秒后降临`, "#ffb3c4");
+                }
+            }
+            this.player.update(dt, this.inputManager.getMoveVector());
+            this.obstacleSystem.resolveCircle(this.player, this.worldWidth, this.worldHeight);
+            this.updateCamera();
+            const spawnResult = this.enemySpawner.update(dt, this.elapsedTime, this.enemies, this.player.x, this.player.y);
+            if (spawnResult.stageLevel) {
+                this.currentStageLevel = spawnResult.stageLevel;
+            }
+            if (spawnResult.stageName) {
+                this.currentStageName = spawnResult.stageName;
+            }
+            if (spawnResult.stageChanged && this.phase === "running") {
+                this.showToast(`关卡${this.currentStageLevel}：${this.currentStageName}`, "#8fd3ff");
+                this.analytics.logEvent("stage_advanced", {
+                    level: this.currentStageLevel,
+                    name: this.currentStageName,
+                    mode: this.runningMode,
                     time: this.elapsedTime
                 });
             }
-            else {
-                this.showToast("首领来袭！", "#ff6d6d");
-            }
-        }
-        if (spawnResult.eliteSpawned) {
-            this.analytics.logEvent("elite_spawned", {
-                time: this.elapsedTime,
-                behavior: spawnResult.eliteBehavior || "none"
-            });
-            if (spawnResult.eliteBehavior === "charge") {
-                this.showToast("\u51b2\u950b\u7cbe\u82f1\u51fa\u73b0\uff01", "#ffd879");
-            }
-            else if (spawnResult.eliteBehavior === "ranged") {
-                this.showToast("\u8fdc\u7a0b\u7cbe\u82f1\u51fa\u73b0\uff01", "#9fe8ff");
-            }
-            else {
-                this.showToast("\u7cbe\u82f1\u602a\u51fa\u73b0\uff01", "#ffd879");
-            }
-        }
-        const obstacleChecker = (x, y, radius) => this.obstacleSystem.isCircleBlocked(x, y, radius);
-        for (const enemy of this.enemies) {
-            if (enemy instanceof Boss_1.Boss) {
-                const actions = enemy.updateBoss(dt, this.player.x, this.player.y, obstacleChecker);
-                for (const action of actions) {
-                    if (action.type === "phase2") {
-                        this.analytics.logEvent("boss_phase2", { time: this.elapsedTime });
-                        this.showToast("首领进入二阶段！", "#ff9fb4");
-                        this.effectSystem.burst(action.x, action.y, action.color || "#ff9fb4", 22);
-                    }
-                    else if (action.type === "dash") {
-                        this.effectSystem.burst(action.x, action.y, action.color || "#ff7f95", 12);
-                    }
-                    else if (action.type === "shockwave") {
-                        this.bossHazards.push({
-                            id: bossHazardAutoId++,
-                            x: action.x,
-                            y: action.y,
-                            radius: action.radius || 120,
-                            windup: action.windup || 0.8,
-                            life: (action.windup || 0.8) + 0.42,
-                            damage: action.damage || 25,
-                            color: action.color || "#ff9ab0",
-                            exploded: false
-                        });
-                    }
+            if (spawnResult.bossSpawned) {
+                this.vibrateShort("medium");
+                const spawnMode = spawnResult.mode || this.runningMode;
+                const bossBatch = spawnResult.bossBatch || 1;
+                this.analytics.logEvent("boss_spawned", {
+                    time: this.elapsedTime,
+                    mode: spawnMode,
+                    batch: bossBatch
+                });
+                if (spawnMode === "endless") {
+                    this.endlessBossBatchReached = Math.max(this.endlessBossBatchReached, bossBatch);
+                    this.showToast(`无尽第${bossBatch}批首领来袭！`, "#ff6d6d");
+                }
+                else if (spawnMode === "story") {
+                    this.storyFinalBossSpawned = true;
+                    this.storyFinalBossId = spawnResult.spawnedBossId || this.findLatestBossId();
+                    this.enhanceStoryFinalBoss(this.storyFinalBossId);
+                    this.showToast("最终首领来袭！", "#ff6d9e");
+                    this.analytics.logEvent("story_final_boss_spawn", {
+                        bossId: this.storyFinalBossId,
+                        time: this.elapsedTime
+                    });
+                }
+                else {
+                    this.showToast("首领来袭！", "#ff6d6d");
                 }
             }
-            else {
-                enemy.update(dt, this.player.x, this.player.y, obstacleChecker);
-                const enemyActions = enemy.drainActions();
-                for (const action of enemyActions) {
-                    if (action.type === "elite_charge_start") {
-                        this.effectSystem.burst(action.x, action.y, action.color || "#ffd879", 10);
-                    }
-                    else if (action.type === "elite_ranged_shot" || action.type === "enemy_ranged_shot") {
-                        const isNormalRanged = action.type === "enemy_ranged_shot";
-                        this.bossHazards.push({
-                            id: bossHazardAutoId++,
-                            x: action.x,
-                            y: action.y,
-                            radius: action.radius || (isNormalRanged ? 50 : 56),
-                            windup: action.windup || (isNormalRanged ? 0.66 : 0.58),
-                            life: (action.windup || (isNormalRanged ? 0.66 : 0.58)) + 0.36,
-                            damage: action.damage || (isNormalRanged ? 10 : 12),
-                            color: action.color || (isNormalRanged ? "#99d7ff" : "#8feeff"),
-                            exploded: false
-                        });
-                    }
+            if (spawnResult.eliteSpawned) {
+                this.analytics.logEvent("elite_spawned", {
+                    time: this.elapsedTime,
+                    behavior: spawnResult.eliteBehavior || "none"
+                });
+                if (spawnResult.eliteBehavior === "charge") {
+                    this.showToast("\u51b2\u950b\u7cbe\u82f1\u51fa\u73b0\uff01", "#ffd879");
+                }
+                else if (spawnResult.eliteBehavior === "ranged") {
+                    this.showToast("\u8fdc\u7a0b\u7cbe\u82f1\u51fa\u73b0\uff01", "#9fe8ff");
+                }
+                else {
+                    this.showToast("\u7cbe\u82f1\u602a\u51fa\u73b0\uff01", "#ffd879");
                 }
             }
-            this.obstacleSystem.resolveCircle(enemy, this.worldWidth, this.worldHeight);
-        }
-        this.tickEnemyStatus(dt);
-        this.weaponSystem.update(dt, this.player, this.enemies, this.effectSystem);
-        const hazardDamage = this.updateBossHazards(dt);
-        const collision = this.collisionSystem.resolve(this.player, this.enemies, this.weaponSystem.projectiles, this.weaponSystem.areas, this.cfg.getBalance().contactDamageInterval);
-        const totalDamageTaken = collision.playerDamageTaken + hazardDamage;
-        if (totalDamageTaken > 0) {
-            this.effectSystem.addFloatingText(this.player.x + 8, this.player.y - 12, `-${Math.round(totalDamageTaken)}`, "#ff7f7f");
-            this.damageFlashTime = Math.max(this.damageFlashTime, 0.16);
-        }
-        for (const dead of collision.killedEnemies) {
-            this.onEnemyKilled(dead, "hit");
-        }
-        const brokenObstacles = this.obstacleSystem.resolveAttacks(this.weaponSystem.projectiles, this.weaponSystem.areas, this.cfg.getBalance().obstacleDamageScale || 0.56);
-        if (brokenObstacles.length > 0) {
-            let expTotal = 0;
-            for (const broken of brokenObstacles) {
-                expTotal += broken.exp;
-                this.dropSystem.spawnExp(broken.x, broken.y, broken.exp);
-                this.effectSystem.burst(broken.x, broken.y, "#a9d7ff", 9);
+            const obstacleChecker = (x, y, radius) => this.obstacleSystem.isCircleBlocked(x, y, radius);
+            for (const enemy of this.enemies) {
+                if (enemy instanceof Boss_1.Boss) {
+                    const actions = enemy.updateBoss(dt, this.player.x, this.player.y, obstacleChecker);
+                    for (const action of actions) {
+                        if (action.type === "phase2") {
+                            this.analytics.logEvent("boss_phase2", { time: this.elapsedTime });
+                            this.showToast("首领进入二阶段！", "#ff9fb4");
+                            this.effectSystem.burst(action.x, action.y, action.color || "#ff9fb4", 22);
+                        }
+                        else if (action.type === "dash") {
+                            this.effectSystem.burst(action.x, action.y, action.color || "#ff7f95", 12);
+                        }
+                        else if (action.type === "shockwave") {
+                            this.bossHazards.push({
+                                id: bossHazardAutoId++,
+                                x: action.x,
+                                y: action.y,
+                                radius: action.radius || 120,
+                                windup: action.windup || 0.8,
+                                life: (action.windup || 0.8) + 0.42,
+                                damage: action.damage || 25,
+                                color: action.color || "#ff9ab0",
+                                exploded: false
+                            });
+                        }
+                    }
+                }
+                else {
+                    enemy.update(dt, this.player.x, this.player.y, obstacleChecker);
+                    const enemyActions = enemy.drainActions();
+                    for (const action of enemyActions) {
+                        if (action.type === "elite_charge_start") {
+                            this.effectSystem.burst(action.x, action.y, action.color || "#ffd879", 10);
+                        }
+                        else if (action.type === "elite_ranged_shot" || action.type === "enemy_ranged_shot") {
+                            const isNormalRanged = action.type === "enemy_ranged_shot";
+                            this.bossHazards.push({
+                                id: bossHazardAutoId++,
+                                x: action.x,
+                                y: action.y,
+                                radius: action.radius || (isNormalRanged ? 50 : 56),
+                                windup: action.windup || (isNormalRanged ? 0.66 : 0.58),
+                                life: (action.windup || (isNormalRanged ? 0.66 : 0.58)) + 0.36,
+                                damage: action.damage || (isNormalRanged ? 10 : 12),
+                                color: action.color || (isNormalRanged ? "#99d7ff" : "#8feeff"),
+                                exploded: false
+                            });
+                        }
+                    }
+                }
+                this.obstacleSystem.resolveCircle(enemy, this.worldWidth, this.worldHeight);
             }
-            this.analytics.logEvent("obstacle_broken", {
-                count: brokenObstacles.length,
-                exp: expTotal,
-                time: this.elapsedTime
-            });
-        }
-        const exp = this.dropSystem.update(dt, this.player, this.cfg.getBalance().expPullSpeed);
-        if (exp > 0) {
-            const levels = this.player.addExp(exp);
-            if (levels > 0) {
-                this.pendingLevelUps += levels;
+            this.tickEnemyStatus(dt);
+            this.weaponSystem.update(dt, this.player, this.enemies, this.effectSystem);
+            const hazardDamage = this.updateBossHazards(dt);
+            const collision = this.collisionSystem.resolve(this.player, this.enemies, this.weaponSystem.projectiles, this.weaponSystem.areas, this.cfg.getBalance().contactDamageInterval);
+            const totalDamageTaken = collision.playerDamageTaken + hazardDamage;
+            if (totalDamageTaken > 0) {
+                this.effectSystem.addFloatingText(this.player.x + 8, this.player.y - 12, `-${Math.round(totalDamageTaken)}`, "#ff7f7f");
+                this.damageFlashTime = Math.max(this.damageFlashTime, 0.16);
+            }
+            for (const dead of collision.killedEnemies) {
+                this.onEnemyKilled(dead, "hit");
+            }
+            const brokenObstacles = this.obstacleSystem.resolveAttacks(this.weaponSystem.projectiles, this.weaponSystem.areas, this.cfg.getBalance().obstacleDamageScale || 0.56);
+            if (brokenObstacles.length > 0) {
+                let expTotal = 0;
+                for (const broken of brokenObstacles) {
+                    expTotal += broken.exp;
+                    this.dropSystem.spawnExp(broken.x, broken.y, broken.exp);
+                    this.effectSystem.burst(broken.x, broken.y, "#a9d7ff", 9);
+                }
+                this.analytics.logEvent("obstacle_broken", {
+                    count: brokenObstacles.length,
+                    exp: expTotal,
+                    time: this.elapsedTime
+                });
+            }
+            const exp = this.dropSystem.update(dt, this.player, this.cfg.getBalance().expPullSpeed);
+            if (exp > 0) {
+                const levels = this.player.addExp(exp);
+                if (levels > 0) {
+                    this.pendingLevelUps += levels;
+                }
+            }
+            this.chestSystem.update(dt);
+            const chest = this.chestSystem.tryPickup(this.player);
+            if (chest) {
+                this.phase = "chest";
+                this.vibrateShort("light");
+                this.chestBoosted = false;
+                this.buildChestMutationRewards(false);
+                this.analytics.logEvent("chest_found", {
+                    time: this.elapsedTime,
+                    weaponOptions: this.chestWeaponOptions.map((item) => item.id),
+                    characterOptions: this.chestCharacterOptions.map((item) => item.id)
+                });
+                this.showToast("发现宝箱！", "#ffd06f");
+            }
+            this.effectSystem.update(dt);
+            this.tryEvolution();
+            if (this.pendingLevelUps > 0 && this.phase === "running") {
+                this.openLevelUp();
+            }
+            if (this.phase === "running" &&
+                this.runningMode === "daily" &&
+                !this.dailyChallengeCleared &&
+                this.elapsedTime >= this.activeDailyChallenge.targetSurviveSeconds) {
+                this.dailyChallengeCleared = true;
+                this.dailyChallengeBonusReward = this.activeDailyChallenge.rewardBonusDna;
+                this.analytics.logEvent("daily_challenge_clear", {
+                    challengeId: this.activeDailyChallenge.id,
+                    challengeName: this.activeDailyChallenge.name,
+                    time: this.elapsedTime,
+                    kills: this.kills
+                });
+                if (this.save.canClaimDailyChallengeReward()) {
+                    this.showToast(`每日挑战完成，额外奖励 +${this.dailyChallengeBonusReward} DNA`, "#97ffbe");
+                }
+                else {
+                    this.showToast("每日挑战完成（今日首通奖励已领取）", "#b9cce2");
+                }
+                this.finalizeRun(true);
+                return;
+            }
+            if (this.phase === "running" && this.runningMode === "story" && this.storyFinalBossKilled) {
+                this.finalizeRun(true);
+                return;
+            }
+            if (this.player.isDead()) {
+                this.phase = "death";
+                this.vibrateShort("medium");
+                this.analytics.logEvent("player_dead", {
+                    time: this.elapsedTime,
+                    level: this.player.level,
+                    kills: this.kills,
+                    hasEvolved: this.hasEvolvedThisRun
+                });
+                this.showToast("战斗失败", "#ff8080");
             }
         }
-        this.chestSystem.update(dt);
-        const chest = this.chestSystem.tryPickup(this.player);
-        if (chest) {
-            this.phase = "chest";
-            this.chestBoosted = false;
-            this.buildChestMutationRewards(false);
-            this.analytics.logEvent("chest_found", {
-                time: this.elapsedTime,
-                weaponOptions: this.chestWeaponOptions.map((item) => item.id),
-                characterOptions: this.chestCharacterOptions.map((item) => item.id)
-            });
-            this.showToast("发现宝箱！", "#ffd06f");
-        }
-        this.effectSystem.update(dt);
-        this.tryEvolution();
-        if (this.pendingLevelUps > 0 && this.phase === "running") {
-            this.openLevelUp();
-        }
-        if (this.phase === "running" &&
-            this.runningMode === "daily" &&
-            !this.dailyChallengeCleared &&
-            this.elapsedTime >= this.activeDailyChallenge.targetSurviveSeconds) {
-            this.dailyChallengeCleared = true;
-            this.dailyChallengeBonusReward = this.activeDailyChallenge.rewardBonusDna;
-            this.analytics.logEvent("daily_challenge_clear", {
-                challengeId: this.activeDailyChallenge.id,
-                challengeName: this.activeDailyChallenge.name,
-                time: this.elapsedTime,
-                kills: this.kills
-            });
-            this.showToast(`每日挑战完成，额外奖励 +${this.dailyChallengeBonusReward} DNA`, "#97ffbe");
-            this.finalizeRun(true);
-            return;
-        }
-        if (this.phase === "running" && this.runningMode === "story" && this.storyFinalBossKilled) {
-            this.finalizeRun(true);
-            return;
-        }
-        if (this.player.isDead()) {
-            this.phase = "death";
-            this.analytics.logEvent("player_dead", {
-                time: this.elapsedTime,
-                level: this.player.level,
-                kills: this.kills,
-                hasEvolved: this.hasEvolvedThisRun
-            });
-            this.showToast("战斗失败", "#ff8080");
+        finally {
+            if (debugPerfEnabled) {
+                this.perfUpdateMs = Date.now() - updateStart;
+                this.updatePerfTelemetry(dt);
+            }
         }
     }
     render(ctx) {
-        this.ui.beginFrame();
-        this.drawBackground(ctx);
-        if (this.phase !== "start" && this.phase !== "encyclopedia") {
-            ctx.save();
-            ctx.translate(this.width * 0.5 - this.cameraX, this.height * 0.5 - this.cameraY);
-            this.drawBattleWorld(ctx);
-            ctx.restore();
-            this.ui.drawBattleHud(ctx, this.width, {
-                hp: this.player.hp,
-                maxHp: this.player.maxHp,
-                exp: this.player.exp,
-                expToNext: this.player.expToNext,
-                level: this.player.level,
-                kills: this.kills,
-                time: this.elapsedTime,
-                elements: Array.from(this.player.elements).map((id) => {
-                    const item = this.cfg.getElement(id);
-                    return { name: item.name, color: item.color };
-                }),
-                weaponSummaries: this.player.ownedBaseWeaponIds.map((baseId) => {
-                    const weaponId = this.player.currentWeaponByBase[baseId];
-                    const weapon = this.cfg.getWeapon(weaponId);
-                    return {
-                        name: weapon.name,
-                        level: this.player.getWeaponLevel(baseId),
-                        color: weapon.color
-                    };
-                }),
-                frenzyActive: this.player.isFrenzyActive(),
-                objectiveText: this.getBattleObjectiveText()
-            });
-            this.drawMiniMap(ctx);
-            if (this.phase === "running") {
-                this.drawBossDirectionPointer(ctx);
+        const debugPerfEnabled = this.save.getData().debugMode;
+        const renderStart = debugPerfEnabled ? Date.now() : 0;
+        try {
+            this.ui.beginFrame();
+            this.drawBackground(ctx);
+            if (this.phase !== "start" && this.phase !== "encyclopedia") {
+                const settings = this.save.getSettings();
+                ctx.save();
+                ctx.translate(this.width * 0.5 - this.cameraX, this.height * 0.5 - this.cameraY);
+                this.drawBattleWorld(ctx);
+                ctx.restore();
+                this.ui.drawBattleHud(ctx, this.width, {
+                    hp: this.player.hp,
+                    maxHp: this.player.maxHp,
+                    exp: this.player.exp,
+                    expToNext: this.player.expToNext,
+                    level: this.player.level,
+                    kills: this.kills,
+                    time: this.elapsedTime,
+                    elements: Array.from(this.player.elements).map((id) => {
+                        const item = this.cfg.getElement(id);
+                        return { name: item.name, color: item.color };
+                    }),
+                    weaponSummaries: this.player.ownedBaseWeaponIds.map((baseId) => {
+                        const weaponId = this.player.currentWeaponByBase[baseId];
+                        const weapon = this.cfg.getWeapon(weaponId);
+                        return {
+                            name: weapon.name,
+                            level: this.player.getWeaponLevel(baseId),
+                            color: weapon.color
+                        };
+                    }),
+                    frenzyActive: this.player.isFrenzyActive(),
+                    objectiveText: this.getBattleObjectiveText(),
+                    showPauseButton: this.phase === "running"
+                });
+                if (settings.performanceMode !== "performance") {
+                    this.drawMiniMap(ctx);
+                }
+                if (this.phase === "running") {
+                    this.drawBossDirectionPointer(ctx);
+                }
             }
-        }
-        if (this.phase === "start") {
-            this.syncLobbyMeta();
-            this.activeDailyChallenge = this.dailyChallengeSystem.getTodayChallenge();
-            const save = this.save.getData();
-            this.ui.drawStartPanel(ctx, this.width, this.height, {
-                bestTime: save.bestSurvivalTime,
-                totalRuns: save.totalRuns,
-                totalKills: save.totalKills,
-                debug: save.debugMode,
-                activeTab: this.lobbyTab,
-                chestClaimed: this.lobbyChestClaimed,
-                freeBuffCharges: this.freeStartBuffCharges,
-                dna: save.dna,
-                weaponCards: this.cfg.getBaseWeaponIds().map((baseId) => {
+            if (this.phase === "start") {
+                this.syncLobbyMeta();
+                this.activeDailyChallenge = this.dailyChallengeSystem.getTodayChallenge();
+                const save = this.save.getData();
+                const settings = this.save.getSettings();
+                const weaponUpgradeMap = this.save.getWeaponUpgradeInfos().reduce((map, item) => {
+                    map[item.baseWeaponId] = item;
+                    return map;
+                }, {});
+                const weaponCards = this.cfg.getBaseWeaponIds().map((baseId) => {
                     const weapon = this.cfg.getWeapon(baseId);
                     const mastery = this.save.getWeaponMasteryInfo(baseId);
+                    const upgradeInfo = weaponUpgradeMap[baseId];
                     return {
                         id: baseId,
                         name: weapon.name,
                         color: weapon.color,
                         description: weapon.description,
+                        upgradeLevel: upgradeInfo ? upgradeInfo.level : 0,
+                        maxUpgradeLevel: upgradeInfo ? upgradeInfo.maxLevel : 0,
+                        fragmentCount: upgradeInfo ? upgradeInfo.fragments : 0,
+                        nextUpgradeCost: upgradeInfo ? upgradeInfo.nextCost : 0,
+                        canUpgrade: upgradeInfo ? upgradeInfo.canUpgrade : false,
+                        damageBonus: upgradeInfo ? upgradeInfo.damageBonus : 0,
+                        unlockedSkills: upgradeInfo ? upgradeInfo.unlockedSkills.map((item) => item.title) : [],
+                        nextSkillTitle: upgradeInfo && upgradeInfo.nextSkill ? `下一技能: ${upgradeInfo.nextSkill.title}` : "技能已满",
                         masteryLevel: mastery.level,
                         masteryProgress: mastery.progress,
                         masteryCurrent: mastery.current,
                         masteryNeed: mastery.need
                     };
-                }),
-                dailyQuests: this.save.getDailyQuests(),
-                shopItems: this.save.getMetaUpgradeShopItems(),
-                shopResetRefund: this.save.getMetaUpgradeResetPreview().refund,
-                unlockedEvolutionCount: save.unlockedEvolutionIds.length,
-                totalEvolutionCount: this.cfg.getAllEvolutionRules().length,
-                selectedMode: this.selectedRunMode,
-                currentModeLabel: this.getModeLabel(this.selectedRunMode),
-                endlessBossInterval: this.cfg.getBalance().endlessBossInterval || 78,
-                dailyChallengeName: this.activeDailyChallenge.name,
-                dailyChallengeDescription: this.activeDailyChallenge.description,
-                dailyChallengeTarget: this.activeDailyChallenge.targetSurviveSeconds,
-                dailyChallengeReward: this.activeDailyChallenge.rewardBonusDna,
-                storyClearTime: this.getStoryClearTime()
-            });
+                });
+                const weaponPageCount = Math.max(1, Math.ceil(weaponCards.length / 4));
+                this.weaponPage = (0, MathUtil_1.clamp)(this.weaponPage, 0, weaponPageCount - 1);
+                const dailyQuests = this.save.getDailyQuests();
+                const claimableQuestCount = dailyQuests.filter((q) => !q.claimed && q.progress >= q.target).length;
+                const totalFragments = Object.values(save.weaponFragments || {}).reduce((sum, value) => sum + Math.max(0, Math.floor(value || 0)), 0);
+                const selectedStoryChapter = this.getSelectedStoryChapter();
+                const chapterCount = this.getStoryChapters().length;
+                const chapterUnlocked = this.save.isStoryChapterUnlocked(selectedStoryChapter.level);
+                const chapterBestStars = this.save.getStoryChapterBestStars(selectedStoryChapter.id);
+                const chapterRecommendedPower = this.getChapterRecommendedPower(selectedStoryChapter);
+                const chapterFirstClear = this.save.isStoryChapterFirstCleared(selectedStoryChapter.id);
+                const chapterRewardPreview = this.formatFragmentRewards(this.getStoryChapterFirstClearRewards(selectedStoryChapter));
+                const chapterStarGoalSummary = this.getStoryStarGoalSummary(selectedStoryChapter);
+                const playerPower = this.save.estimatePlayerPower();
+                const startGate = this.getStartRunGate();
+                const antiSnapshot = this.anti.getStatusSnapshot();
+                this.ui.drawStartPanel(ctx, this.width, this.height, {
+                    bestTime: save.bestSurvivalTime,
+                    totalRuns: save.totalRuns,
+                    totalKills: save.totalKills,
+                    debug: save.debugMode,
+                    activeTab: this.lobbyTab,
+                    chestClaimed: this.lobbyChestClaimed,
+                    totalFragments,
+                    dna: save.dna,
+                    weaponCards,
+                    weaponPage: this.weaponPage,
+                    weaponPageCount,
+                    dailyQuests,
+                    claimableQuestCount,
+                    shopItems: this.save.getMetaUpgradeShopItems(),
+                    shopResetRefund: this.save.getMetaUpgradeResetPreview().refund,
+                    unlockedEvolutionCount: save.unlockedEvolutionIds.length,
+                    totalEvolutionCount: this.cfg.getAllEvolutionRules().length,
+                    selectedMode: this.selectedRunMode,
+                    currentModeLabel: this.getModeLabel(this.selectedRunMode),
+                    selectedStoryChapterLevel: selectedStoryChapter.level,
+                    selectedStoryChapterName: selectedStoryChapter.name,
+                    selectedStoryChapterDescription: selectedStoryChapter.description,
+                    storyChapterCount: chapterCount,
+                    storyUnlockedChapterLevel: this.save.getUnlockedStoryChapterLevel(),
+                    selectedStoryChapterUnlocked: chapterUnlocked,
+                    selectedStoryChapterBestStars: chapterBestStars,
+                    selectedStoryChapterRecommendedPower: chapterRecommendedPower,
+                    selectedStoryChapterFirstClear: chapterFirstClear,
+                    selectedStoryChapterFirstClearRewardPreview: chapterRewardPreview,
+                    selectedStoryChapterStarGoalSummary: chapterStarGoalSummary,
+                    playerPower,
+                    canStartRun: startGate.ok,
+                    startBlockedReason: startGate.reason,
+                    antiEnabled: antiSnapshot.enabled,
+                    antiStatusText: antiSnapshot.authStatusText,
+                    antiPlaytimeText: antiSnapshot.enabled && antiSnapshot.isMinor
+                        ? `今日时长 ${Math.floor(antiSnapshot.playtimeTodaySeconds / 60)} / ${Math.floor(antiSnapshot.playtimeLimitSeconds / 60)} 分钟`
+                        : antiSnapshot.enabled
+                            ? "成人账号不受时长限制"
+                            : "防沉迷未启用",
+                    antiNeedRealname: antiSnapshot.enabled && !antiSnapshot.realnameVerified,
+                    antiNeedFaceVerify: antiSnapshot.enabled && antiSnapshot.needFaceVerify,
+                    antiGateMessage: antiSnapshot.gate.ok ? "" : antiSnapshot.gate.message,
+                    endlessBossInterval: this.cfg.getBalance().endlessBossInterval || 78,
+                    dailyChallengeName: this.activeDailyChallenge.name,
+                    dailyChallengeDescription: this.activeDailyChallenge.description,
+                    dailyChallengeTarget: this.activeDailyChallenge.targetSurviveSeconds,
+                    dailyChallengeReward: this.activeDailyChallenge.rewardBonusDna,
+                    dailyChallengeRewardClaimed: this.save.isDailyChallengeRewardClaimed(),
+                    storyClearTime: this.getStoryClearTime(),
+                    settingsSfxEnabled: settings.sfxEnabled,
+                    settingsVibrationEnabled: settings.vibrationEnabled,
+                    settingsPerformanceMode: settings.performanceMode,
+                    settingsMoveSensitivity: settings.moveSensitivity
+                });
+            }
+            else if (this.phase === "pause") {
+                this.ui.drawPausePanel(ctx, this.width, this.height, {
+                    kills: this.kills,
+                    time: this.elapsedTime
+                });
+            }
+            else if (this.phase === "upgrade") {
+                this.ui.drawUpgradePanel(ctx, this.width, this.height, this.levelUpOptions, this.extraAdOption, !!this.extraAdOption && this.canOfferAd("extraUpgrade"));
+            }
+            else if (this.phase === "chest") {
+                this.ui.drawChestPanel(ctx, this.width, this.height, this.chestWeaponOptions, this.chestCharacterOptions, this.chestBoosted, this.canOfferAd("chestBoost"));
+            }
+            else if (this.phase === "death") {
+                this.ui.drawDeathPanel(ctx, this.width, this.height, {
+                    kills: this.kills,
+                    time: this.elapsedTime,
+                    reviveUsed: this.reviveUsed
+                });
+            }
+            else if (this.phase === "settlement") {
+                this.ui.drawSettlementPanel(ctx, this.width, this.height, {
+                    kills: this.kills,
+                    time: this.elapsedTime,
+                    reward: this.settleReward,
+                    doubled: this.settleDoubled,
+                    fragmentSummary: this.formatFragmentRewards(this.settleFragmentRewards),
+                    storySummary: this.getSettlementStorySummary(),
+                    storyFirstClearSummary: this.settleStoryFirstClearRewards.length > 0
+                        ? `章节首通奖励: ${this.formatFragmentRewards(this.settleStoryFirstClearRewards)}`
+                        : ""
+                });
+            }
+            else if (this.phase === "encyclopedia") {
+                const entries = this.encyclopediaSystem.getEntries();
+                const pageCount = Math.max(1, Math.ceil(entries.length / 16));
+                this.encyclopediaPage = (0, MathUtil_1.clamp)(this.encyclopediaPage, 0, pageCount - 1);
+                this.ui.drawEncyclopediaPanel(ctx, this.width, this.height, entries, this.save.getData().debugMode, this.encyclopediaPage, pageCount);
+            }
+            this.drawEvolutionFeedback(ctx);
+            this.drawDamageFlash(ctx);
+            if (debugPerfEnabled && this.phase !== "start") {
+                this.drawPerformanceOverlay(ctx);
+            }
+            if (this.toast) {
+                this.ui.drawToast(ctx, this.width, this.toast, this.toastColor);
+            }
+            if (this.adStateText) {
+                this.ui.drawAdState(ctx, this.width, this.adStateText);
+            }
         }
-        else if (this.phase === "upgrade") {
-            this.ui.drawUpgradePanel(ctx, this.width, this.height, this.levelUpOptions, this.extraAdOption, !!this.extraAdOption && this.canOfferAd("extraUpgrade"));
-        }
-        else if (this.phase === "chest") {
-            this.ui.drawChestPanel(ctx, this.width, this.height, this.chestWeaponOptions, this.chestCharacterOptions, this.chestBoosted, this.canOfferAd("chestBoost"));
-        }
-        else if (this.phase === "death") {
-            this.ui.drawDeathPanel(ctx, this.width, this.height, {
-                kills: this.kills,
-                time: this.elapsedTime,
-                reviveUsed: this.reviveUsed
-            });
-        }
-        else if (this.phase === "settlement") {
-            this.ui.drawSettlementPanel(ctx, this.width, this.height, {
-                kills: this.kills,
-                time: this.elapsedTime,
-                reward: this.settleReward,
-                doubled: this.settleDoubled
-            });
-        }
-        else if (this.phase === "encyclopedia") {
-            this.ui.drawEncyclopediaPanel(ctx, this.width, this.height, this.encyclopediaSystem.getEntries(), this.save.getData().debugMode);
-        }
-        this.drawEvolutionFeedback(ctx);
-        this.drawDamageFlash(ctx);
-        if (this.toast) {
-            this.ui.drawToast(ctx, this.width, this.toast, this.toastColor);
-        }
-        if (this.adStateText) {
-            this.ui.drawAdState(ctx, this.width, this.adStateText);
+        finally {
+            if (debugPerfEnabled) {
+                this.perfRenderMs = Date.now() - renderStart;
+            }
         }
     }
     onTap(x, y) {
@@ -464,6 +708,44 @@ class BattleScene {
             return;
         }
         const id = button.id;
+        if (id === "pause_run" && this.phase === "running") {
+            this.phase = "pause";
+            this.analytics.logEvent("run_pause", {
+                time: this.elapsedTime,
+                kills: this.kills
+            });
+            return;
+        }
+        if (id === "pause_resume" && this.phase === "pause") {
+            this.phase = "running";
+            this.analytics.logEvent("run_resume", {
+                time: this.elapsedTime,
+                kills: this.kills
+            });
+            return;
+        }
+        if (id === "pause_exit" && this.phase === "pause") {
+            if (!this.confirmAction("pause_exit", "退出本局")) {
+                return;
+            }
+            this.analytics.logEvent("run_abandon", {
+                time: this.elapsedTime,
+                kills: this.kills,
+                mode: this.runningMode
+            });
+            this.analytics.endRun({
+                time: this.elapsedTime,
+                kills: this.kills,
+                mode: this.runningMode,
+                abandoned: true
+            });
+            this.anti.onRunEnd();
+            this.phase = "start";
+            this.lobbyTab = "home";
+            this.syncLobbyMeta();
+            this.showToast("已退出本局", "#c7dff9");
+            return;
+        }
         if (id === "tab_chest") {
             this.lobbyTab = "chest";
             return;
@@ -480,33 +762,77 @@ class BattleScene {
             this.lobbyTab = "mode";
             return;
         }
+        if (id === "tab_settings") {
+            this.lobbyTab = "settings";
+            return;
+        }
         if (id === "claim_chest") {
-            if (!this.save.canClaimDailyChest()) {
+            const claim = this.save.claimDailyChest();
+            if (!claim.ok) {
                 this.syncLobbyMeta();
                 this.showToast("宝箱今日已领取", "#ffd7a0");
                 return;
             }
-            const gain = Math.random() < 0.24 ? 2 : 1;
-            this.save.claimDailyChest(gain);
             this.syncLobbyMeta();
+            const rewardText = this.formatFragmentRewards(claim.rewards);
             this.analytics.logEvent("lobby_chest_claim", {
-                gain,
-                freeStartBuffCharges: this.freeStartBuffCharges
+                rewards: claim.rewards
             });
-            this.showToast(`领取成功：开局增益券 x${gain}`, "#ffe38f");
+            this.showToast(`领取成功：${rewardText}`, "#ffe38f");
             return;
         }
         if (id === "start_run") {
-            const useFreeBuff = this.save.consumeFreeStartBuffCharge();
-            this.syncLobbyMeta();
-            if (useFreeBuff) {
-                this.showToast("已消耗增益券，本局开局获得狂热", "#ffe38f");
+            const gate = this.getStartRunGate(true);
+            if (!gate.ok) {
+                this.showToast(gate.reason, "#ffb9a6");
+                return;
             }
-            this.startRun(useFreeBuff);
+            this.startRun(false);
             return;
         }
         if (id === "start_buff_ad") {
+            const gate = this.getStartRunGate(true);
+            if (!gate.ok) {
+                this.showToast(gate.reason, "#ffb9a6");
+                return;
+            }
             this.playAdStartBuff();
+            return;
+        }
+        if (id === "anti_realname_auth") {
+            this.handleAntiRealnameAuth();
+            return;
+        }
+        if (id === "anti_face_verify") {
+            this.handleAntiFaceVerify();
+            return;
+        }
+        if (id === "daily_claim_all") {
+            const quests = this.save.getDailyQuests();
+            let claimedCount = 0;
+            let totalDna = 0;
+            for (const quest of quests) {
+                if (quest.claimed || quest.progress < quest.target) {
+                    continue;
+                }
+                const claim = this.save.claimDailyQuest(quest.id);
+                if (!claim.ok) {
+                    continue;
+                }
+                claimedCount += 1;
+                totalDna += claim.rewardDna;
+            }
+            if (claimedCount <= 0) {
+                this.showToast("当前没有可领取的任务奖励", "#bcd2e8");
+                return;
+            }
+            this.syncLobbyMeta();
+            this.analytics.logEvent("daily_quest_claim_all", {
+                claimedCount,
+                rewardDna: totalDna
+            });
+            const text = `已领取 ${claimedCount} 个任务奖励：DNA+${totalDna}`;
+            this.showToast(text, "#8fffc1");
             return;
         }
         if (id.startsWith("daily_claim_")) {
@@ -521,17 +847,42 @@ class BattleScene {
                 this.syncLobbyMeta();
                 this.analytics.logEvent("daily_quest_claim", {
                     questId: quest.id,
-                    rewardDna: claim.rewardDna,
-                    rewardBuffCharge: claim.rewardBuffCharge
+                    rewardDna: claim.rewardDna
                 });
-                let rewardText = `领取成功：DNA+${claim.rewardDna}`;
-                if (claim.rewardBuffCharge > 0) {
-                    rewardText += `，增益券+${claim.rewardBuffCharge}`;
-                }
+                const rewardText = `领取成功：DNA+${claim.rewardDna}`;
                 this.showToast(rewardText, "#8fffc1");
             }
             else {
                 this.showToast("任务未完成或已领取", "#ffd3a8");
+            }
+            return;
+        }
+        if (id.startsWith("weapon_upgrade_")) {
+            const baseWeaponId = id.slice("weapon_upgrade_".length);
+            const upgrade = this.save.tryUpgradeWeapon(baseWeaponId);
+            if (upgrade.ok) {
+                const weapon = this.cfg.getWeapon(baseWeaponId);
+                let text = `${weapon.name}强化 Lv.${upgrade.level}，伤害+${(upgrade.info.damageBonus * 100).toFixed(0)}%`;
+                if (upgrade.unlockedSkills.length > 0) {
+                    text += `，解锁：${upgrade.unlockedSkills.map((item) => item.title).join("、")}`;
+                }
+                this.analytics.logEvent("weapon_upgrade", {
+                    baseWeaponId,
+                    level: upgrade.level,
+                    cost: upgrade.cost,
+                    unlockedSkillIds: upgrade.unlockedSkills.map((item) => item.id),
+                    damageBonus: upgrade.info.damageBonus
+                });
+                this.showToast(text, "#8fffd0");
+            }
+            else if (upgrade.reason === "fragment") {
+                this.showToast("碎片不足，无法升级", "#ffb8a8");
+            }
+            else if (upgrade.reason === "max") {
+                this.showToast("该武器已满级", "#bde8ff");
+            }
+            else {
+                this.showToast("升级失败", "#ffb8a8");
             }
             return;
         }
@@ -559,6 +910,9 @@ class BattleScene {
             return;
         }
         if (id === "shop_reset_points") {
+            if (!this.confirmAction("shop_reset_points", "重置加点")) {
+                return;
+            }
             const reset = this.save.resetMetaUpgrades();
             if (reset.ok) {
                 this.analytics.logEvent("meta_upgrade_reset", {
@@ -594,7 +948,13 @@ class BattleScene {
         }
         if (id === "mode_story") {
             this.selectedRunMode = "story";
-            this.showToast("已切换：标准模式", "#9fd8ff");
+            const chapter = this.getSelectedStoryChapter();
+            if (this.save.isStoryChapterUnlocked(chapter.level)) {
+                this.showToast(`已切换：标准模式 第${chapter.level}章`, "#9fd8ff");
+            }
+            else {
+                this.showToast(`第${chapter.level}章未解锁，先通关上一章`, "#ffbfaa");
+            }
             return;
         }
         if (id === "mode_endless") {
@@ -612,19 +972,61 @@ class BattleScene {
             this.showToast("该模式开发中，敬请期待", "#b6b2ff");
             return;
         }
+        if (id === "story_chapter_prev" || id === "story_chapter_next") {
+            const chapters = this.getStoryChapters();
+            if (chapters.length <= 0) {
+                this.showToast("暂无可用章节", "#b9cce2");
+                return;
+            }
+            if (this.selectedRunMode !== "story") {
+                this.selectedRunMode = "story";
+            }
+            let idx = chapters.findIndex((item) => item.level === this.selectedStoryChapterLevel);
+            if (idx < 0) {
+                idx = 0;
+            }
+            const delta = id === "story_chapter_next" ? 1 : -1;
+            idx = (0, MathUtil_1.clamp)(idx + delta, 0, chapters.length - 1);
+            const chapter = chapters[idx];
+            this.selectedStoryChapterLevel = chapter.level;
+            if (this.save.isStoryChapterUnlocked(chapter.level)) {
+                this.showToast(`已选择第${chapter.level}章：${chapter.name}`, "#8fd3ff");
+            }
+            else {
+                this.showToast(`第${chapter.level}章未解锁，先通关上一章`, "#ffbfaa");
+            }
+            return;
+        }
+        if (id === "weapon_page_prev") {
+            this.weaponPage = Math.max(0, this.weaponPage - 1);
+            return;
+        }
+        if (id === "weapon_page_next") {
+            const total = Math.max(1, Math.ceil(this.cfg.getBaseWeaponIds().length / 4));
+            this.weaponPage = Math.min(total - 1, this.weaponPage + 1);
+            return;
+        }
         if (id === "open_encyclopedia") {
+            this.encyclopediaPage = 0;
             this.phase = "encyclopedia";
             return;
         }
         if (id === "toggle_debug") {
             const current = this.save.getData().debugMode;
             this.save.setDebugMode(!current);
+            if (!current) {
+                this.resetPerfTelemetry();
+            }
             this.analytics.logEvent("debug_toggle", { enabled: !current });
             this.showToast(`调试模式${!current ? "开启" : "关闭"}`, "#ffd38a");
             return;
         }
         if (id === "reset_save") {
+            if (!this.confirmAction("reset_save", "重置存档")) {
+                return;
+            }
             this.save.resetSave();
+            this.applySettingsToRuntime();
             this.syncLobbyMeta();
             this.analytics.logEvent("save_reset");
             this.showToast("存档已重置", "#ff9c9c");
@@ -639,9 +1041,49 @@ class BattleScene {
             this.showToast("埋点已清空", "#9fd8ff");
             return;
         }
+        if (id === "setting_toggle_sfx") {
+            const next = !this.save.getSettings().sfxEnabled;
+            this.save.setSfxEnabled(next);
+            this.showToast(`音效已${next ? "开启" : "关闭"}`, "#9fd8ff");
+            return;
+        }
+        if (id === "setting_toggle_vibration") {
+            const next = !this.save.getSettings().vibrationEnabled;
+            this.save.setVibrationEnabled(next);
+            this.showToast(`震动已${next ? "开启" : "关闭"}`, "#9fd8ff");
+            if (next) {
+                this.vibrateShort("light");
+            }
+            return;
+        }
+        if (id === "setting_perf_quality" || id === "setting_perf_balanced" || id === "setting_perf_performance") {
+            const mode = id === "setting_perf_quality" ? "quality" : id === "setting_perf_performance" ? "performance" : "balanced";
+            this.save.setPerformanceMode(mode);
+            this.applySettingsToRuntime();
+            this.showToast(`性能档位：${this.getPerformanceLabel(mode)}`, "#a9dfff");
+            return;
+        }
+        if (id === "setting_sensitivity_dec" || id === "setting_sensitivity_inc") {
+            const settings = this.save.getSettings();
+            const delta = id === "setting_sensitivity_inc" ? 0.05 : -0.05;
+            const next = Math.round((settings.moveSensitivity + delta) * 100) / 100;
+            this.save.setMoveSensitivity(next);
+            this.applySettingsToRuntime();
+            this.showToast(`灵敏度 ${this.save.getSettings().moveSensitivity.toFixed(2)}`, "#a9dfff");
+            return;
+        }
         if (id === "close_encyclopedia") {
             this.phase = "start";
             this.lobbyTab = "weapon";
+            return;
+        }
+        if (id === "encyclopedia_prev") {
+            this.encyclopediaPage = Math.max(0, this.encyclopediaPage - 1);
+            return;
+        }
+        if (id === "encyclopedia_next") {
+            const total = Math.max(1, Math.ceil(this.encyclopediaSystem.getEntries().length / 16));
+            this.encyclopediaPage = Math.min(total - 1, this.encyclopediaPage + 1);
             return;
         }
         if (id === "debug_unlock_all") {
@@ -733,11 +1175,33 @@ class BattleScene {
         }
     }
     drawBackground(ctx) {
-        const grad = ctx.createLinearGradient(0, 0, 0, this.height);
-        grad.addColorStop(0, "#0f1a2a");
-        grad.addColorStop(1, "#0b111a");
-        ctx.fillStyle = grad;
+        const gradient = ctx.createLinearGradient(0, 0, this.width, this.height);
+        gradient.addColorStop(0, "#163f54");
+        gradient.addColorStop(0.55, "#2f6474");
+        gradient.addColorStop(1, "#46362a");
+        ctx.fillStyle = gradient;
         ctx.fillRect(0, 0, this.width, this.height);
+        const t = this.elapsedTime;
+        const orbA = ctx.createRadialGradient(this.width * (0.2 + 0.04 * Math.sin(t * 0.25)), this.height * 0.18, 0, this.width * (0.2 + 0.04 * Math.sin(t * 0.25)), this.height * 0.18, this.width * 0.58);
+        orbA.addColorStop(0, "rgba(118, 232, 255, 0.26)");
+        orbA.addColorStop(1, "rgba(118, 232, 255, 0)");
+        ctx.fillStyle = orbA;
+        ctx.fillRect(0, 0, this.width, this.height);
+        const orbB = ctx.createRadialGradient(this.width * (0.86 - 0.05 * Math.cos(t * 0.3)), this.height * 0.86, 0, this.width * (0.86 - 0.05 * Math.cos(t * 0.3)), this.height * 0.86, this.width * 0.64);
+        orbB.addColorStop(0, "rgba(255, 198, 123, 0.2)");
+        orbB.addColorStop(1, "rgba(255, 198, 123, 0)");
+        ctx.fillStyle = orbB;
+        ctx.fillRect(0, 0, this.width, this.height);
+        ctx.strokeStyle = "rgba(211, 234, 255, 0.08)";
+        ctx.lineWidth = 1;
+        const stripeGap = 34;
+        const drift = (t * 12) % stripeGap;
+        for (let y = -stripeGap; y <= this.height + stripeGap; y += stripeGap) {
+            ctx.beginPath();
+            ctx.moveTo(0, y + drift);
+            ctx.lineTo(this.width, y + drift + 20);
+            ctx.stroke();
+        }
     }
     drawBattleWorld(ctx) {
         this.drawWorldFloor(ctx);
@@ -830,15 +1294,7 @@ class BattleScene {
                 ctx.fillRect(enemy.x - enemy.radius, shieldY, enemy.radius * 2 * shieldRatio, 3);
             }
         }
-        ctx.fillStyle = "#7fc4ff";
-        ctx.beginPath();
-        ctx.arc(this.player.x, this.player.y, this.player.radius, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = "#d7f0ff";
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(this.player.x, this.player.y, this.player.radius + 4, 0, Math.PI * 2);
-        ctx.stroke();
+        this.drawPlayerBody(ctx);
         if (this.player.isDamageImmune()) {
             const pulse = 0.72 + 0.28 * Math.sin(this.elapsedTime * 15);
             const ratio = this.player.getDamageImmuneRatio();
@@ -855,18 +1311,107 @@ class BattleScene {
             ctx.stroke();
             ctx.globalAlpha = 1;
             ctx.fillStyle = "#dff8ff";
-            ctx.font = "11px sans-serif";
+            ctx.font = "11px Microsoft YaHei";
             ctx.fillText("\u65E0\u654C", this.player.x - 12, this.player.y + this.player.radius + 18);
         }
         this.drawPlayerHeadBars(ctx);
         this.effectSystem.render(ctx);
     }
+    drawPlayerBody(ctx) {
+        if (this.playerSprite && this.playerSpriteReady) {
+            const spriteRadius = this.player.radius * 1.42;
+            ctx.drawImage(this.playerSprite, this.player.x - spriteRadius, this.player.y - spriteRadius, spriteRadius * 2, spriteRadius * 2);
+        }
+        else {
+            ctx.fillStyle = "#7fc4ff";
+            ctx.beginPath();
+            ctx.arc(this.player.x, this.player.y, this.player.radius, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.strokeStyle = "#d7f0ff";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(this.player.x, this.player.y, this.player.radius + 4, 0, Math.PI * 2);
+        ctx.stroke();
+    }
     drawWorldFloor(ctx) {
-        ctx.fillStyle = "#111d2d";
+        const perfMode = this.save.getSettings().performanceMode;
+        this.ensureWorldFloorCache(perfMode);
+        if (this.floorCacheCanvas) {
+            ctx.drawImage(this.floorCacheCanvas, 0, 0);
+            return;
+        }
+        this.paintWorldFloor(ctx, perfMode);
+    }
+    ensureWorldFloorCache(mode) {
+        if (this.floorCacheDisabled) {
+            return;
+        }
+        const needRebuild = !this.floorCacheCanvas ||
+            this.floorCacheMode !== mode ||
+            this.floorCacheWidth !== this.worldWidth ||
+            this.floorCacheHeight !== this.worldHeight;
+        if (!needRebuild) {
+            return;
+        }
+        const cacheCanvas = this.createFloorCacheCanvas(this.worldWidth, this.worldHeight);
+        if (!cacheCanvas) {
+            this.floorCacheDisabled = true;
+            this.floorCacheCanvas = null;
+            return;
+        }
+        const cacheCtx = cacheCanvas.getContext("2d");
+        if (!cacheCtx) {
+            this.floorCacheDisabled = true;
+            this.floorCacheCanvas = null;
+            return;
+        }
+        this.paintWorldFloor(cacheCtx, mode);
+        this.floorCacheCanvas = cacheCanvas;
+        this.floorCacheMode = mode;
+        this.floorCacheWidth = this.worldWidth;
+        this.floorCacheHeight = this.worldHeight;
+    }
+    createFloorCacheCanvas(width, height) {
+        try {
+            if (typeof wx !== "undefined" && wx && typeof wx.createOffscreenCanvas === "function") {
+                const offscreen = wx.createOffscreenCanvas({
+                    type: "2d",
+                    width,
+                    height
+                });
+                if (offscreen) {
+                    offscreen.width = width;
+                    offscreen.height = height;
+                }
+                return offscreen;
+            }
+        }
+        catch (error) {
+            // ignore and fallback
+        }
+        const offscreenCtor = globalThis.OffscreenCanvas;
+        if (typeof offscreenCtor === "function") {
+            return new offscreenCtor(width, height);
+        }
+        return null;
+    }
+    paintWorldFloor(ctx, mode) {
+        ctx.clearRect(0, 0, this.worldWidth, this.worldHeight);
+        const floorBase = ctx.createLinearGradient(0, 0, this.worldWidth, this.worldHeight);
+        floorBase.addColorStop(0, "#184254");
+        floorBase.addColorStop(0.5, "#2b5f6f");
+        floorBase.addColorStop(1, "#3c3428");
+        ctx.fillStyle = floorBase;
         ctx.fillRect(0, 0, this.worldWidth, this.worldHeight);
-        ctx.strokeStyle = "rgba(110, 142, 178, 0.1)";
+        const focalGlow = ctx.createRadialGradient(this.worldWidth * 0.5, this.worldHeight * 0.45, 0, this.worldWidth * 0.5, this.worldHeight * 0.45, Math.max(this.worldWidth, this.worldHeight) * 0.58);
+        focalGlow.addColorStop(0, "rgba(122, 238, 255, 0.12)");
+        focalGlow.addColorStop(1, "rgba(122, 238, 255, 0)");
+        ctx.fillStyle = focalGlow;
+        ctx.fillRect(0, 0, this.worldWidth, this.worldHeight);
+        ctx.strokeStyle = "rgba(200, 238, 255, 0.11)";
         ctx.lineWidth = 1;
-        const step = 72;
+        const step = mode === "quality" ? 72 : mode === "performance" ? 128 : 96;
         for (let x = 0; x <= this.worldWidth; x += step) {
             ctx.beginPath();
             ctx.moveTo(x, 0);
@@ -879,9 +1424,21 @@ class BattleScene {
             ctx.lineTo(this.worldWidth, y);
             ctx.stroke();
         }
-        ctx.strokeStyle = "rgba(180, 220, 255, 0.3)";
-        ctx.lineWidth = 3;
-        ctx.strokeRect(2, 2, this.worldWidth - 4, this.worldHeight - 4);
+        if (mode === "quality") {
+            ctx.strokeStyle = "rgba(255, 213, 153, 0.12)";
+            ctx.lineWidth = 1.5;
+            const ringRadius = Math.max(140, Math.min(this.worldWidth, this.worldHeight) * 0.18);
+            for (let i = 0; i < 6; i += 1) {
+                ctx.beginPath();
+                ctx.arc(this.worldWidth * (0.14 + (i % 3) * 0.34), this.worldHeight * (0.18 + Math.floor(i / 3) * 0.38), ringRadius * (0.7 + (i % 2) * 0.18), 0, Math.PI * 2);
+                ctx.stroke();
+            }
+        }
+        if (mode !== "performance") {
+            ctx.strokeStyle = "rgba(188, 231, 255, 0.3)";
+            ctx.lineWidth = 2;
+            ctx.strokeRect(3, 3, this.worldWidth - 6, this.worldHeight - 6);
+        }
     }
     renderBossHazards(ctx) {
         for (const hazard of this.bossHazards) {
@@ -931,7 +1488,7 @@ class BattleScene {
         ctx.fillStyle = "#6dc9ff";
         ctx.fillRect(x, expY, barWidth * expRatio, barHeight);
         ctx.fillStyle = "#e9f7ff";
-        ctx.font = "11px sans-serif";
+        ctx.font = "11px Microsoft YaHei";
         ctx.fillText(`Lv.${this.player.level}`, this.player.x - 13, y - 4);
     }
     drawMiniMap(ctx) {
@@ -998,7 +1555,7 @@ class BattleScene {
         ctx.arc(toMapX(this.player.x), toMapY(this.player.y), 3, 0, Math.PI * 2);
         ctx.fill();
         ctx.fillStyle = "#bcd9ff";
-        ctx.font = "12px sans-serif";
+        ctx.font = "12px Microsoft YaHei";
         ctx.fillText("小地图", x + 8, y - 6);
     }
     getPrimaryBoss() {
@@ -1069,11 +1626,17 @@ class BattleScene {
         const distMeter = Math.max(1, Math.floor(dist / 10));
         ctx.globalAlpha = 0.88;
         ctx.fillStyle = nearRatio > 0.66 ? "#ffd2d9" : "#ffdbe4";
-        ctx.font = "12px sans-serif";
+        ctx.font = "12px Microsoft YaHei";
         ctx.fillText(`首领 ${distMeter}m`, px - 28, py + 20);
         ctx.globalAlpha = 1;
     }
     startRun(withStartBuff) {
+        const antiGate = this.anti.getGameplayGate(new Date(), true);
+        if (!antiGate.ok) {
+            this.phase = "start";
+            this.showToast(antiGate.message || "当前不可开始游戏", "#ffb9a6");
+            return;
+        }
         this.phase = "running";
         this.elapsedTime = 0;
         this.kills = 0;
@@ -1086,6 +1649,13 @@ class BattleScene {
         this.pityInjectedCount = 0;
         this.pityHintShown = false;
         this.runningMode = this.selectedRunMode;
+        let selectedStoryChapter = this.getSelectedStoryChapter();
+        if (this.runningMode === "story" && !this.save.isStoryChapterUnlocked(selectedStoryChapter.level)) {
+            selectedStoryChapter = this.getHighestUnlockedStoryChapter();
+            this.selectedStoryChapterLevel = selectedStoryChapter.level;
+        }
+        this.runningStoryChapterLevel = selectedStoryChapter.level;
+        this.runningStoryChapterName = selectedStoryChapter.name;
         this.endlessBossBatchReached = 0;
         this.dailyChallengeCleared = false;
         this.dailyChallengeBonusReward = 0;
@@ -1093,6 +1663,24 @@ class BattleScene {
         this.storyFinalBossKilled = false;
         this.storyFinalBossId = 0;
         this.storyFinalBossWarningShown = false;
+        this.settleFragmentRewards = [];
+        this.settleStoryStars = 0;
+        this.settleStoryBestStars = 0;
+        this.settleStoryStarTargetKills = 0;
+        this.settleStoryChapterLevel = 0;
+        this.settleStoryFirstClearRewards = [];
+        const stages = this.cfg.getStageConfigs();
+        if (stages.length > 0) {
+            const targetStage = this.runningMode === "story"
+                ? stages.find((item) => item.level >= selectedStoryChapter.startStageLevel) || stages[stages.length - 1]
+                : stages[0];
+            this.currentStageLevel = targetStage.level;
+            this.currentStageName = targetStage.name;
+        }
+        else {
+            this.currentStageLevel = 1;
+            this.currentStageName = "默认关卡";
+        }
         const dailyChallenge = this.runningMode === "daily" ? this.dailyChallengeSystem.getTodayChallenge() : null;
         if (dailyChallenge) {
             this.activeDailyChallenge = dailyChallenge;
@@ -1101,6 +1689,7 @@ class BattleScene {
         this.player.reset();
         const metaEffects = this.save.getMetaUpgradeEffects();
         this.player.applyMetaUpgrades(metaEffects);
+        this.applyWeaponUpgradeRuntimeToPlayer();
         if (dailyChallenge) {
             if (dailyChallenge.playerDamageMul && dailyChallenge.playerDamageMul > 0) {
                 this.player.passives.damageMultiplier *= dailyChallenge.playerDamageMul;
@@ -1125,21 +1714,38 @@ class BattleScene {
         const dailyEnemyDamageMul = dailyChallenge
             ? Math.max(0.92, 1 + (dailyChallenge.enemyHpMul - 1) * 0.35)
             : 1;
+        const storyEnemyDamageMul = this.runningMode === "story" ? selectedStoryChapter.enemyDamageMul : 1;
         const storyBossTime = this.runningMode === "story"
-            ? this.getStoryClearTime()
+            ? selectedStoryChapter.storyClearTime
             : dailyChallenge
                 ? dailyChallenge.bossTime
                 : this.cfg.getBalance().bossSpawnTime;
+        const chapterEnemyWeightMulById = this.runningMode === "story" ? this.getChapterEnemyWeightMulById(selectedStoryChapter) : undefined;
         this.enemySpawner.reset({
             mode: this.runningMode,
             storyBossTime: storyBossTime,
             endlessBossFirstTime: this.cfg.getBalance().endlessBossFirstTime || 72,
             endlessBossInterval: this.cfg.getBalance().endlessBossInterval || 78,
             endlessBossHpBatchScale: this.cfg.getBalance().endlessBossHpBatchScale || 0.16,
-            enemyHpMul: dailyChallenge ? dailyChallenge.enemyHpMul : 1,
-            enemySpeedMul: dailyChallenge ? dailyChallenge.enemySpeedMul : 1,
-            enemyDamageMul: dailyEnemyDamageMul,
-            spawnIntervalMul: dailyChallenge ? dailyChallenge.spawnIntervalMul : 1
+            enemyHpMul: dailyChallenge
+                ? dailyChallenge.enemyHpMul
+                : this.runningMode === "story"
+                    ? selectedStoryChapter.enemyHpMul
+                    : 1,
+            enemySpeedMul: dailyChallenge
+                ? dailyChallenge.enemySpeedMul
+                : this.runningMode === "story"
+                    ? selectedStoryChapter.enemySpeedMul
+                    : 1,
+            enemyDamageMul: dailyChallenge ? dailyEnemyDamageMul : storyEnemyDamageMul,
+            spawnIntervalMul: dailyChallenge
+                ? dailyChallenge.spawnIntervalMul
+                : this.runningMode === "story"
+                    ? selectedStoryChapter.spawnIntervalMul
+                    : 1,
+            maxEnemyCount: this.getEnemyCapByPerformance(this.save.getSettings().performanceMode),
+            startStageLevel: this.runningMode === "story" ? selectedStoryChapter.startStageLevel : 1,
+            chapterEnemyWeightMulById
         });
         this.weaponSystem.reset(this.player);
         this.chestSystem.clear();
@@ -1150,7 +1756,9 @@ class BattleScene {
         this.effectSystem.floatingTexts.length = 0;
         this.effectSystem.particles.length = 0;
         this.effectSystem.ringPulses.length = 0;
+        this.applySettingsToRuntime();
         this.ad.resetRunState();
+        this.anti.onRunStart();
         this.damageFlashTime = 0;
         this.evolutionHitStopTime = 0;
         this.evolutionFlashTime = 0;
@@ -1161,7 +1769,9 @@ class BattleScene {
             withStartBuff,
             mode: this.runningMode,
             dailyChallengeId: dailyChallenge ? dailyChallenge.id : "",
-            dailyChallengeTarget: dailyChallenge ? dailyChallenge.targetSurviveSeconds : 0
+            dailyChallengeTarget: dailyChallenge ? dailyChallenge.targetSurviveSeconds : 0,
+            storyChapterLevel: this.runningMode === "story" ? selectedStoryChapter.level : 0,
+            storyChapterName: this.runningMode === "story" ? selectedStoryChapter.name : ""
         });
         if (withStartBuff) {
             this.player.activateFrenzy(this.cfg.getBalance().startBuffDuration);
@@ -1176,7 +1786,12 @@ class BattleScene {
             this.effectSystem.addFloatingText(this.player.x, this.player.y - this.player.radius - 10, `目标 ${Math.ceil(dailyChallenge.targetSurviveSeconds)}s`, dailyChallenge.color);
         }
         else if (this.runningMode === "story") {
-            this.showToast(`标准模式：${Math.ceil(this.getStoryClearTime())}秒后最终首领登场`, "#9fd8ff");
+            this.showToast(`第${selectedStoryChapter.level}章：${selectedStoryChapter.name}（${Math.ceil(selectedStoryChapter.storyClearTime)}秒首领）`, "#9fd8ff");
+            const playerPower = this.save.estimatePlayerPower();
+            const recommendedPower = this.getChapterRecommendedPower(selectedStoryChapter);
+            if (playerPower < recommendedPower) {
+                this.showToast(`当前战力${playerPower}，低于推荐${recommendedPower}`, "#ffc4a8");
+            }
         }
         if (!this.save.getData().tutorialSeen) {
             this.showToast("拖动控制移动，攻击会自动释放", "#9fd6ff");
@@ -1213,12 +1828,48 @@ class BattleScene {
     }
     finalizeRun(cleared = false) {
         this.phase = "settlement";
+        this.anti.onRunEnd();
         const baseReward = Math.floor(this.kills * 2 + this.elapsedTime * 1.5);
-        const dailyBonus = this.runningMode === "daily" && this.dailyChallengeCleared ? this.dailyChallengeBonusReward : 0;
+        const canClaimDailyBonus = this.runningMode === "daily" && this.dailyChallengeCleared && this.save.canClaimDailyChallengeReward();
+        const dailyBonus = canClaimDailyBonus ? this.dailyChallengeBonusReward : 0;
         this.settleReward = baseReward + dailyBonus;
         this.settleDoubled = false;
+        this.settleStoryStars = 0;
+        this.settleStoryBestStars = 0;
+        this.settleStoryStarTargetKills = 0;
+        this.settleStoryChapterLevel = 0;
+        this.settleStoryFirstClearRewards = [];
+        const runningStoryChapter = this.getRunningStoryChapter();
+        const chapterKillStarTarget = this.getChapterKillStarTarget(runningStoryChapter);
+        if (this.runningMode === "story") {
+            this.settleStoryChapterLevel = runningStoryChapter.level;
+            this.settleStoryStarTargetKills = chapterKillStarTarget;
+        }
         this.save.appendRunStats(this.elapsedTime, this.kills);
         this.save.addDna(this.settleReward);
+        if (dailyBonus > 0) {
+            this.save.markDailyChallengeRewardClaimed();
+        }
+        this.settleFragmentRewards = this.save.grantRunWeaponFragments(this.player.ownedBaseWeaponIds, this.elapsedTime, this.kills, Array.from(this.evolvedBaseIdsThisRun));
+        const fragmentRewardTotal = this.settleFragmentRewards.reduce((sum, item) => sum + item.amount, 0);
+        if (this.runningMode === "story" && cleared) {
+            const storyStars = this.calcStoryStars(chapterKillStarTarget);
+            const starUpdate = this.save.setStoryChapterBestStars(runningStoryChapter.id, storyStars);
+            this.settleStoryStars = storyStars;
+            this.settleStoryBestStars = starUpdate.bestStars;
+            if (!this.save.isStoryChapterFirstCleared(runningStoryChapter.id)) {
+                this.settleStoryFirstClearRewards = this.getStoryChapterFirstClearRewards(runningStoryChapter);
+                this.save.addWeaponFragmentBundle(this.settleStoryFirstClearRewards);
+                this.save.markStoryChapterFirstCleared(runningStoryChapter.id);
+            }
+            const nextChapter = this.getStoryChapters().find((item) => item.level === runningStoryChapter.level + 1);
+            if (nextChapter) {
+                const unlockResult = this.save.unlockStoryChapter(nextChapter.level);
+                if (unlockResult.changed) {
+                    this.selectedStoryChapterLevel = nextChapter.level;
+                }
+            }
+        }
         const masteryResult = this.save.addRunWeaponMastery(this.player.ownedBaseWeaponIds, this.elapsedTime, this.kills, Array.from(this.evolvedBaseIdsThisRun));
         const completedQuests = this.save.applyRunToDailyQuests({
             kills: this.kills,
@@ -1233,16 +1884,31 @@ class BattleScene {
         if (dailyBonus > 0) {
             this.showToast(`每日挑战奖励 +${dailyBonus} DNA`, "#9df3b8");
         }
+        else if (this.runningMode === "daily" && this.dailyChallengeCleared) {
+            this.showToast("今日挑战首通奖励已领取", "#b9cce2");
+        }
         const leveledMastery = masteryResult.filter((item) => item.levelAfter > item.levelBefore);
         if (leveledMastery.length > 0) {
             const first = leveledMastery[0];
             const weapon = this.cfg.getWeapon(first.baseWeaponId);
             this.showToast(`熟练度提升：${weapon.name} Lv.${first.levelAfter}`, "#9fe6ff");
         }
+        if (this.settleFragmentRewards.length > 0) {
+            this.showToast(`碎片奖励：${this.formatFragmentRewards(this.settleFragmentRewards)}`, "#9fe6ff");
+        }
+        if (this.settleStoryStars > 0) {
+            const starText = this.formatStars(this.settleStoryStars);
+            this.showToast(`章节评分：${starText}`, "#ffdca1");
+        }
+        if (this.settleStoryFirstClearRewards.length > 0) {
+            this.showToast(`章节首通奖励：${this.formatFragmentRewards(this.settleStoryFirstClearRewards)}`, "#9df4b4");
+        }
         this.analytics.logEvent("settlement_open", {
             time: this.elapsedTime,
             kills: this.kills,
             reward: this.settleReward,
+            fragmentRewardTotal,
+            fragmentRewards: this.settleFragmentRewards,
             mode: this.runningMode,
             endlessBossBatchReached: this.endlessBossBatchReached,
             evolved: this.hasEvolvedThisRun,
@@ -1254,12 +1920,17 @@ class BattleScene {
             dailyChallengeId: this.runningMode === "daily" ? this.activeDailyChallenge.id : "",
             dailyChallengeCleared: this.dailyChallengeCleared,
             dailyChallengeBonus: dailyBonus,
+            storyStars: this.settleStoryStars,
+            storyBestStars: this.settleStoryBestStars,
+            storyFirstClearReward: this.settleStoryFirstClearRewards,
             cleared
         });
         this.analytics.endRun({
             time: this.elapsedTime,
             kills: this.kills,
             reward: this.settleReward,
+            fragmentRewardTotal,
+            fragmentRewards: this.settleFragmentRewards,
             mode: this.runningMode,
             endlessBossBatchReached: this.endlessBossBatchReached,
             evolved: this.hasEvolvedThisRun,
@@ -1271,6 +1942,9 @@ class BattleScene {
             dailyChallengeId: this.runningMode === "daily" ? this.activeDailyChallenge.id : "",
             dailyChallengeCleared: this.dailyChallengeCleared,
             dailyChallengeBonus: dailyBonus,
+            storyStars: this.settleStoryStars,
+            storyBestStars: this.settleStoryBestStars,
+            storyFirstClearReward: this.settleStoryFirstClearRewards,
             cleared
         });
     }
@@ -1351,9 +2025,59 @@ class BattleScene {
         this.evolutionBannerTime = 1.1;
         this.evolutionBannerText = `\u8FDB\u5316\u89C9\u9192:${name}`;
         this.evolutionBannerColor = color;
+        this.vibrateShort("medium");
         this.player.activateDamageImmunity(this.cfg.getBalance().evolutionInvulnerableDuration || 0.7);
         this.effectSystem.burst(this.player.x, this.player.y, color, 26);
         this.effectSystem.pulseRing(this.player.x, this.player.y, color, this.player.radius + 10, this.player.radius + 162, 0.52, 5);
+    }
+    updatePerfTelemetry(dt) {
+        const frameMs = dt * 1000;
+        this.perfSampleSeconds += dt;
+        this.perfSampleFrames += 1;
+        this.perfSampleFrameMsSum += frameMs;
+        this.perfSampleWorstFrameMs = Math.max(this.perfSampleWorstFrameMs, frameMs);
+        if (this.perfSampleSeconds < 0.45) {
+            return;
+        }
+        const frames = Math.max(1, this.perfSampleFrames);
+        this.perfFps = frames / this.perfSampleSeconds;
+        this.perfAvgFrameMs = this.perfSampleFrameMsSum / frames;
+        this.perfWorstFrameMs = this.perfSampleWorstFrameMs;
+        this.perfSampleSeconds = 0;
+        this.perfSampleFrames = 0;
+        this.perfSampleFrameMsSum = 0;
+        this.perfSampleWorstFrameMs = 0;
+    }
+    resetPerfTelemetry() {
+        this.perfSampleSeconds = 0;
+        this.perfSampleFrames = 0;
+        this.perfSampleFrameMsSum = 0;
+        this.perfSampleWorstFrameMs = 0;
+        this.perfFps = 0;
+        this.perfAvgFrameMs = 0;
+        this.perfWorstFrameMs = 0;
+        this.perfUpdateMs = 0;
+        this.perfRenderMs = 0;
+    }
+    drawPerformanceOverlay(ctx) {
+        const panelX = 14;
+        const panelY = 126;
+        const panelW = 232;
+        const panelH = 94;
+        ctx.fillStyle = "rgba(5, 11, 19, 0.78)";
+        ctx.fillRect(panelX, panelY, panelW, panelH);
+        ctx.strokeStyle = "rgba(113, 198, 255, 0.9)";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(panelX, panelY, panelW, panelH);
+        ctx.fillStyle = "#dff2ff";
+        ctx.font = "13px Microsoft YaHei";
+        ctx.fillText("性能监控(调试)", panelX + 10, panelY + 17);
+        ctx.fillStyle = "#9ad9ff";
+        ctx.font = "12px Microsoft YaHei";
+        ctx.fillText(`FPS ${this.perfFps.toFixed(1)} | 帧耗 ${this.perfAvgFrameMs.toFixed(1)}ms`, panelX + 10, panelY + 37);
+        ctx.fillText(`最差帧 ${this.perfWorstFrameMs.toFixed(1)}ms`, panelX + 10, panelY + 55);
+        ctx.fillText(`更新 ${this.perfUpdateMs.toFixed(1)}ms | 渲染 ${this.perfRenderMs.toFixed(1)}ms`, panelX + 10, panelY + 73);
+        ctx.fillText(`怪物 ${this.enemies.length} | 弹幕 ${this.weaponSystem.projectiles.length} | 区域 ${this.weaponSystem.areas.length}`, panelX + 10, panelY + 91);
     }
     drawDamageFlash(ctx) {
         if (this.damageFlashTime <= 0) {
@@ -1396,7 +2120,7 @@ class BattleScene {
         ctx.lineWidth = 3;
         ctx.strokeRect(panelX, panelY, panelW, panelH);
         ctx.fillStyle = "#f2f8ff";
-        ctx.font = "21px sans-serif";
+        ctx.font = "21px Microsoft YaHei";
         ctx.fillText(this.evolutionBannerText, panelX + 16, panelY + 34);
         ctx.globalAlpha = 1;
     }
@@ -1414,8 +2138,10 @@ class BattleScene {
                 this.effectSystem.addFloatingText(enemy.x + 6, enemy.y - 8, `-${Math.round(dotDamage)}`, enemy.getStatusOverlayColor() || "#ffffff");
             }
             if (enemy.isDead()) {
-                this.enemies.splice(i, 1);
-                this.onEnemyKilled(enemy, "dot");
+                const dead = this.removeEnemyAt(i);
+                if (dead) {
+                    this.onEnemyKilled(dead, "dot");
+                }
             }
         }
     }
@@ -1429,8 +2155,8 @@ class BattleScene {
                 this.effectSystem.burst(hazard.x, hazard.y, hazard.color, 20);
                 const dx = this.player.x - hazard.x;
                 const dy = this.player.y - hazard.y;
-                const dist = Math.sqrt(dx * dx + dy * dy);
-                if (dist <= hazard.radius + this.player.radius) {
+                const hitRadius = hazard.radius + this.player.radius;
+                if (dx * dx + dy * dy <= hitRadius * hitRadius) {
                     const tookDamage = this.player.receiveDamage(hazard.damage);
                     if (tookDamage) {
                         playerDamage += hazard.damage;
@@ -1439,15 +2165,37 @@ class BattleScene {
             }
             hazard.life -= dt;
             if (hazard.life <= 0) {
-                this.bossHazards.splice(i, 1);
+                this.removeBossHazardAt(i);
             }
         }
         return playerDamage;
     }
+    removeEnemyAt(index) {
+        if (index < 0 || index >= this.enemies.length) {
+            return null;
+        }
+        const lastIndex = this.enemies.length - 1;
+        const removed = this.enemies[index];
+        if (index !== lastIndex) {
+            this.enemies[index] = this.enemies[lastIndex];
+        }
+        this.enemies.pop();
+        return removed || null;
+    }
+    removeBossHazardAt(index) {
+        if (index < 0 || index >= this.bossHazards.length) {
+            return;
+        }
+        const lastIndex = this.bossHazards.length - 1;
+        if (index !== lastIndex) {
+            this.bossHazards[index] = this.bossHazards[lastIndex];
+        }
+        this.bossHazards.pop();
+    }
     onEnemyKilled(dead, cause) {
         this.kills += 1;
         this.dropSystem.spawnExp(dead.x, dead.y, dead.expDrop);
-        this.chestSystem.onEnemyKilled(dead.x, dead.y, dead.isBoss, dead.isElite, this.cfg.getBalance().chestDropChance, this.cfg.getBalance().eliteChestDropBonus);
+        this.chestSystem.onEnemyKilled(dead.x, dead.y, dead.isBoss, dead.isElite, this.cfg.getBalance().chestDropChance, this.cfg.getBalance().eliteChestDropBonus, this.cfg.getBalance().chestSpawnMinGap || 0);
         if (dead.isElite) {
             this.showToast("精英怪已击败！", "#ffd879");
             this.analytics.logEvent("elite_killed", {
@@ -1457,6 +2205,7 @@ class BattleScene {
             });
         }
         if (dead.isBoss) {
+            this.vibrateShort("medium");
             this.showToast("首领已击败！", "#ff9fb4");
             this.analytics.logEvent("boss_killed", {
                 time: this.elapsedTime,
@@ -1479,27 +2228,30 @@ class BattleScene {
         this.effectSystem.burst(dead.x, dead.y, dead.color, dead.isBoss ? 26 : dead.isElite ? 18 : 10);
     }
     getStoryClearTime() {
-        return Math.max(90, this.cfg.getBalance().storyClearTime || 180);
+        const chapter = this.phase === "running" ? this.getRunningStoryChapter() : this.getSelectedStoryChapter();
+        return Math.max(90, chapter.storyClearTime || this.cfg.getBalance().storyClearTime || 180);
     }
     getBattleObjectiveText() {
         if (this.phase !== "running") {
             return "";
         }
+        const stageLabel = `关卡${this.currentStageLevel}·${this.currentStageName}`;
         if (this.runningMode === "story") {
+            const chapterLabel = `第${this.runningStoryChapterLevel}章`;
             if (this.storyFinalBossKilled) {
-                return "目标完成：最终首领已击败";
+                return `${chapterLabel} | ${stageLabel} | 目标完成：最终首领已击败`;
             }
             if (this.storyFinalBossSpawned) {
-                return "目标：击败最终首领";
+                return `${chapterLabel} | ${stageLabel} | 目标：击败最终首领`;
             }
             const remain = Math.max(0, this.getStoryClearTime() - this.elapsedTime);
-            return `目标：${Math.ceil(remain)}秒后最终首领降临`;
+            return `${chapterLabel} | ${stageLabel} | 目标：${Math.ceil(remain)}秒后最终首领降临`;
         }
         if (this.runningMode === "daily") {
             const remain = Math.max(0, this.activeDailyChallenge.targetSurviveSeconds - this.elapsedTime);
-            return `挑战目标：生存${Math.ceil(remain)}秒`;
+            return `${stageLabel} | 挑战目标：生存${Math.ceil(remain)}秒`;
         }
-        return "无尽目标：持续生存并击败批次首领";
+        return `${stageLabel} | 无尽目标：持续生存并击败批次首领`;
     }
     findLatestBossId() {
         for (let i = this.enemies.length - 1; i >= 0; i -= 1) {
@@ -1518,9 +2270,11 @@ class BattleScene {
             return;
         }
         const balance = this.cfg.getBalance();
-        const hpMul = Math.max(1.1, balance.storyFinalBossHpScale || 1.62);
-        const speedMul = Math.max(1, balance.storyFinalBossSpeedMul || 1.08);
-        const damageMul = Math.max(1, balance.storyFinalBossDamageMul || 1.24);
+        const chapter = this.getRunningStoryChapter();
+        const chapterBossTuning = this.getChapterBossTuning(chapter);
+        const hpMul = Math.max(1.1, (balance.storyFinalBossHpScale || 1.62) * chapterBossTuning.hpMul);
+        const speedMul = Math.max(1, (balance.storyFinalBossSpeedMul || 1.08) * chapterBossTuning.speedMul);
+        const damageMul = Math.max(1, (balance.storyFinalBossDamageMul || 1.24) * chapterBossTuning.damageMul);
         boss.maxHp *= hpMul;
         boss.hp *= hpMul;
         boss.speed *= speedMul;
@@ -1665,10 +2419,35 @@ class BattleScene {
             this.showToast("复制失败，已输出到控制台", "#ffb6a3");
         }
     }
+    async handleAntiRealnameAuth() {
+        const result = await this.anti.requestRealNameAuth("manual");
+        if (result.ok) {
+            this.showToast(result.message || "实名认证成功", "#9df4b4");
+            return;
+        }
+        this.showToast(result.message || "实名认证失败", "#ffb6a3");
+    }
+    async handleAntiFaceVerify() {
+        const result = await this.anti.requestFaceVerify("manual");
+        if (result.ok) {
+            this.showToast(result.message || "人脸核验成功", "#9df4b4");
+            return;
+        }
+        this.showToast(result.message || "人脸核验失败", "#ffb6a3");
+    }
     getAdGateMessage(placement, gate) {
         const placementLabel = this.getPlacementLabel(placement);
         if (gate.reason === "playing") {
             return "广告播放中，请稍候";
+        }
+        if (gate.reason === "disabled") {
+            return `${placementLabel}已关闭`;
+        }
+        if (gate.reason === "unsupported") {
+            return "当前环境不支持广告能力";
+        }
+        if (gate.reason === "ad_unit_missing") {
+            return `${placementLabel}未配置广告位`;
         }
         if (gate.reason === "min_run_time") {
             return `${placementLabel}需在${Math.ceil(gate.remainSeconds || 0)}秒后可用`;
@@ -1688,6 +2467,54 @@ class BattleScene {
         };
         return map[placement] || placement;
     }
+    confirmAction(action, label) {
+        if (this.pendingConfirmAction === action && this.pendingConfirmTime > 0) {
+            this.pendingConfirmAction = "";
+            this.pendingConfirmTime = 0;
+            return true;
+        }
+        this.pendingConfirmAction = action;
+        this.pendingConfirmTime = 2.4;
+        this.showToast(`再次点击以确认${label}`, "#ffd0a8");
+        return false;
+    }
+    applySettingsToRuntime() {
+        const settings = this.save.getSettings();
+        this.inputManager.setMoveSensitivity(settings.moveSensitivity);
+        this.effectSystem.setPerformanceMode(settings.performanceMode);
+        this.enemySpawner.setMaxEnemyCount(this.getEnemyCapByPerformance(settings.performanceMode));
+    }
+    getPerformanceLabel(mode) {
+        if (mode === "quality") {
+            return "高画质";
+        }
+        if (mode === "performance") {
+            return "性能";
+        }
+        return "均衡";
+    }
+    getEnemyCapByPerformance(mode) {
+        if (mode === "quality") {
+            return 176;
+        }
+        if (mode === "performance") {
+            return 112;
+        }
+        return 144;
+    }
+    vibrateShort(type = "light") {
+        if (!this.save.getSettings().vibrationEnabled) {
+            return;
+        }
+        try {
+            wx.vibrateShort({
+                type: type === "medium" ? "medium" : "light"
+            });
+        }
+        catch (error) {
+            // Ignore unsupported vibration environments.
+        }
+    }
     updateCamera() {
         const halfW = this.width * 0.5;
         const halfH = this.height * 0.5;
@@ -1704,9 +2531,204 @@ class BattleScene {
             this.cameraY = (0, MathUtil_1.clamp)(this.player.y, halfH, this.worldHeight - halfH);
         }
     }
+    applyWeaponUpgradeRuntimeToPlayer() {
+        const infos = this.save.getWeaponUpgradeInfos();
+        for (const info of infos) {
+            this.player.setWeaponUpgradeRuntime(info.baseWeaponId, info.damageBonus, info.unlockedSkills.map((item) => item.id));
+        }
+    }
+    formatFragmentRewards(rewards) {
+        if (rewards.length <= 0) {
+            return "无";
+        }
+        return rewards
+            .map((item) => {
+            const weapon = this.cfg.getWeapon(item.baseWeaponId);
+            return `${weapon.name}碎片+${item.amount}`;
+        })
+            .join("，");
+    }
+    getStartRunGate(recordBlocked = false) {
+        const antiGate = this.anti.getGameplayGate(new Date(), recordBlocked);
+        if (!antiGate.ok) {
+            return {
+                ok: false,
+                reason: antiGate.message || "当前不可开始游戏"
+            };
+        }
+        if (this.selectedRunMode !== "story") {
+            return {
+                ok: true,
+                reason: ""
+            };
+        }
+        const chapter = this.getSelectedStoryChapter();
+        if (this.save.isStoryChapterUnlocked(chapter.level)) {
+            return {
+                ok: true,
+                reason: ""
+            };
+        }
+        return {
+            ok: false,
+            reason: `第${chapter.level}章未解锁，请先通关第${Math.max(1, chapter.level - 1)}章`
+        };
+    }
+    getHighestUnlockedStoryChapter() {
+        const chapters = this.getStoryChapters();
+        if (chapters.length <= 0) {
+            return this.getSelectedStoryChapter();
+        }
+        const unlockedLevel = this.save.getUnlockedStoryChapterLevel();
+        return chapters.filter((item) => item.level <= unlockedLevel).pop() || chapters[0];
+    }
+    getChapterRecommendedPower(chapter) {
+        if (typeof chapter.recommendedPower === "number" && Number.isFinite(chapter.recommendedPower)) {
+            return Math.max(100, Math.floor(chapter.recommendedPower));
+        }
+        const level = Math.max(1, chapter.level);
+        return Math.floor(120 + level * level * 4.5 + level * 28);
+    }
+    getChapterKillStarTarget(chapter) {
+        var _a;
+        const configured = (_a = chapter.starGoals) === null || _a === void 0 ? void 0 : _a.killTarget;
+        if (typeof configured === "number" && Number.isFinite(configured)) {
+            return Math.max(50, Math.floor(configured));
+        }
+        const level = Math.max(1, chapter.level);
+        return Math.floor(90 + level * 12 + level * level * 0.52);
+    }
+    getStoryStarGoalSummary(chapter) {
+        return `通关 | 无复活通关 | 击杀≥${this.getChapterKillStarTarget(chapter)}`;
+    }
+    getStoryChapterFirstClearRewards(chapter) {
+        if (Array.isArray(chapter.firstClearFragmentRewards) && chapter.firstClearFragmentRewards.length > 0) {
+            return chapter.firstClearFragmentRewards
+                .map((item) => ({
+                baseWeaponId: item.baseWeaponId,
+                amount: Math.max(1, Math.floor(item.amount || 0))
+            }))
+                .filter((item) => !!item.baseWeaponId && item.amount > 0);
+        }
+        const ids = this.cfg.getBaseWeaponIds();
+        if (ids.length <= 0) {
+            return [];
+        }
+        const level = Math.max(1, chapter.level);
+        const mainIndex = (level - 1) % ids.length;
+        const subIndex = (mainIndex + 1) % ids.length;
+        const rewards = [
+            {
+                baseWeaponId: ids[mainIndex],
+                amount: 10 + level * 2
+            },
+            {
+                baseWeaponId: ids[subIndex],
+                amount: 6 + Math.floor(level * 1.4)
+            }
+        ];
+        if (level >= 8) {
+            const extraIndex = (mainIndex + 2) % ids.length;
+            rewards.push({
+                baseWeaponId: ids[extraIndex],
+                amount: 4 + Math.floor(level * 0.8)
+            });
+        }
+        return rewards;
+    }
+    getChapterEnemyWeightMulById(chapter) {
+        if (chapter.enemyWeightMulById && Object.keys(chapter.enemyWeightMulById).length > 0) {
+            return chapter.enemyWeightMulById;
+        }
+        const progress = (0, MathUtil_1.clamp)((Math.max(1, chapter.level) - 1) / 19, 0, 1);
+        return {
+            slime: Math.max(0.24, 1 - progress * 0.74),
+            hound: 1 + progress * 0.34,
+            spitter: chapter.level >= 3 ? 0.9 + progress * 0.62 : 0.45,
+            brute: chapter.level >= 4 ? 0.82 + progress * 0.86 : 0.38,
+            shield_guard: chapter.level >= 5 ? 0.74 + progress * 1.02 : 0.35,
+            swift_stalker: chapter.level >= 6 ? 0.68 + progress * 1.22 : 0.32
+        };
+    }
+    getChapterBossTuning(chapter) {
+        if (chapter.bossTuning) {
+            return {
+                hpMul: Math.max(1, chapter.bossTuning.hpMul || 1),
+                speedMul: Math.max(1, chapter.bossTuning.speedMul || 1),
+                damageMul: Math.max(1, chapter.bossTuning.damageMul || 1)
+            };
+        }
+        const pressure = Math.max(0, chapter.level - 1);
+        return {
+            hpMul: 1 + pressure * 0.045,
+            speedMul: 1 + pressure * 0.008,
+            damageMul: 1 + pressure * 0.04
+        };
+    }
+    calcStoryStars(killTarget) {
+        let stars = 1;
+        if (!this.reviveUsed) {
+            stars += 1;
+        }
+        if (this.kills >= killTarget) {
+            stars += 1;
+        }
+        return Math.max(1, Math.min(3, stars));
+    }
+    formatStars(stars) {
+        const safe = Math.max(0, Math.min(3, Math.floor(stars || 0)));
+        return `${"★".repeat(safe)}${"☆".repeat(Math.max(0, 3 - safe))}`;
+    }
+    getSettlementStorySummary() {
+        if (this.runningMode !== "story" || this.settleStoryChapterLevel <= 0 || this.settleStoryStars <= 0) {
+            return "";
+        }
+        const starText = this.formatStars(this.settleStoryStars);
+        const bestText = this.settleStoryBestStars > 0 ? `历史最高 ${this.formatStars(this.settleStoryBestStars)}` : "";
+        const killText = `击杀目标 ${this.kills}/${this.settleStoryStarTargetKills}`;
+        return `第${this.settleStoryChapterLevel}章评分 ${starText} | ${killText}${bestText ? ` | ${bestText}` : ""}`;
+    }
+    getStoryChapters() {
+        return this.cfg
+            .getStoryChapters()
+            .slice()
+            .sort((a, b) => a.level - b.level);
+    }
+    getSelectedStoryChapter() {
+        const chapters = this.getStoryChapters();
+        if (chapters.length <= 0) {
+            return {
+                id: "chapter_fallback",
+                level: 1,
+                name: "默认章节",
+                description: "默认标准局",
+                storyClearTime: this.cfg.getBalance().storyClearTime || 180,
+                startStageLevel: 1,
+                enemyHpMul: 1,
+                enemySpeedMul: 1,
+                enemyDamageMul: 1,
+                spawnIntervalMul: 1
+            };
+        }
+        const exact = chapters.find((item) => item.level === this.selectedStoryChapterLevel);
+        if (exact) {
+            return exact;
+        }
+        return chapters.filter((item) => item.level <= this.selectedStoryChapterLevel).pop() || chapters[0];
+    }
+    getRunningStoryChapter() {
+        const chapters = this.getStoryChapters();
+        if (chapters.length <= 0) {
+            return this.getSelectedStoryChapter();
+        }
+        const exact = chapters.find((item) => item.level === this.runningStoryChapterLevel);
+        if (exact) {
+            return exact;
+        }
+        return chapters.filter((item) => item.level <= this.runningStoryChapterLevel).pop() || chapters[0];
+    }
     syncLobbyMeta() {
         this.lobbyChestClaimed = !this.save.canClaimDailyChest();
-        this.freeStartBuffCharges = this.save.getFreeStartBuffCharges();
     }
     showToast(text, color = "#ffffff") {
         this.toast = text;
@@ -1724,7 +2746,9 @@ class BattleScene {
         if (mode === "daily") {
             return "每日挑战";
         }
-        return "标准模式";
+        const chapter = this.getSelectedStoryChapter();
+        const locked = !this.save.isStoryChapterUnlocked(chapter.level);
+        return locked ? `标准模式（第${chapter.level}章·未解锁）` : `标准模式（第${chapter.level}章）`;
     }
 }
 exports.BattleScene = BattleScene;

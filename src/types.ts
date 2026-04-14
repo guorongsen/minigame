@@ -107,6 +107,54 @@ export interface EnemyConfig {
   isBoss?: boolean;
 }
 
+export interface StageConfig {
+  id: string;
+  level: number;
+  name: string;
+  startTime: number;
+  enemyIds: string[];
+  enemyHpMul: number;
+  enemySpeedMul: number;
+  enemyDamageMul: number;
+  spawnIntervalMul: number;
+  eliteIntervalMul: number;
+  spawnCountBonus: number;
+  weightByEnemyId?: Record<string, number>;
+}
+
+export interface FragmentReward {
+  baseWeaponId: string;
+  amount: number;
+}
+
+export interface StoryChapterStarGoals {
+  killTarget: number;
+}
+
+export interface StoryChapterBossTuning {
+  hpMul: number;
+  speedMul: number;
+  damageMul: number;
+}
+
+export interface StoryChapterConfig {
+  id: string;
+  level: number;
+  name: string;
+  description: string;
+  storyClearTime: number;
+  startStageLevel: number;
+  enemyHpMul: number;
+  enemySpeedMul: number;
+  enemyDamageMul: number;
+  spawnIntervalMul: number;
+  recommendedPower?: number;
+  starGoals?: StoryChapterStarGoals;
+  firstClearFragmentRewards?: FragmentReward[];
+  enemyWeightMulById?: Record<string, number>;
+  bossTuning?: StoryChapterBossTuning;
+}
+
 export type UpgradeCategory =
   | "new_weapon"
   | "weapon_level"
@@ -232,7 +280,7 @@ export type AdPlacement =
 
 export interface AdGateResult {
   ok: boolean;
-  reason?: "playing" | "min_run_time" | "cooldown";
+  reason?: "playing" | "min_run_time" | "cooldown" | "unsupported" | "ad_unit_missing" | "disabled";
   remainSeconds?: number;
 }
 
@@ -261,7 +309,6 @@ export interface DailyQuestProgress {
   target: number;
   progress: number;
   rewardDna: number;
-  rewardBuffCharge: number;
   claimed: boolean;
 }
 
@@ -286,20 +333,55 @@ export interface MetaUpgradeEffects {
   pickupBonus: number;
 }
 
+export type PerformanceMode = "quality" | "balanced" | "performance";
+
+export interface GameSettings {
+  sfxEnabled: boolean;
+  vibrationEnabled: boolean;
+  performanceMode: PerformanceMode;
+  moveSensitivity: number;
+}
+
 export interface SaveData {
+  version: number;
   unlockedEvolutionIds: string[];
+  storyUnlockedChapterLevel: number;
+  storyChapterBestStars: Record<string, number>;
+  storyChapterFirstClearIds: string[];
   bestSurvivalTime: number;
   totalKills: number;
   totalRuns: number;
   tutorialSeen: boolean;
   debugMode: boolean;
   dailyChestClaimDate: string;
-  freeStartBuffCharges: number;
   dna: number;
+  weaponFragments: Record<string, number>;
+  weaponUpgradeLevels: Record<string, number>;
   weaponMasteryExp: Record<string, number>;
   dailyQuestDate: string;
   dailyQuests: DailyQuestProgress[];
   metaUpgradeLevels: Record<MetaUpgradeType, number>;
+  dailyChallengeRewardClaimDate: string;
+  settings: GameSettings;
+}
+
+export interface WeaponSkillDefinition {
+  id: string;
+  title: string;
+  description: string;
+  unlockLevel: number;
+}
+
+export interface WeaponUpgradeInfo {
+  baseWeaponId: string;
+  level: number;
+  maxLevel: number;
+  fragments: number;
+  nextCost: number;
+  canUpgrade: boolean;
+  damageBonus: number;
+  unlockedSkills: WeaponSkillDefinition[];
+  nextSkill: WeaponSkillDefinition | null;
 }
 
 export interface UIButton {
@@ -311,6 +393,34 @@ export interface UIButton {
   h: number;
   color: string;
   textColor?: string;
+}
+
+export type AntiAddictionAgeGroup = "unknown" | "under8" | "age8to15" | "age16to17" | "adult";
+
+export type AntiAddictionBlockReason =
+  | "realname_required"
+  | "face_verify_required"
+  | "curfew"
+  | "playtime_limit";
+
+export interface AntiAddictionGateResult {
+  ok: boolean;
+  reason?: AntiAddictionBlockReason;
+  message: string;
+  remainSeconds?: number;
+}
+
+export interface AntiAddictionStatusSnapshot {
+  enabled: boolean;
+  realnameVerified: boolean;
+  isMinor: boolean;
+  needFaceVerify: boolean;
+  ageGroup: AntiAddictionAgeGroup;
+  authStatusText: string;
+  playtimeTodaySeconds: number;
+  playtimeLimitSeconds: number;
+  playtimeRemainSeconds: number;
+  gate: AntiAddictionGateResult;
 }
 
 export interface RuntimeStats {

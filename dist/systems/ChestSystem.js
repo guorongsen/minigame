@@ -8,9 +8,11 @@ let chestAutoId = 1;
 class ChestSystem {
     constructor() {
         this.chests = [];
+        this.spawnCooldown = 0;
     }
     clear() {
         this.chests.length = 0;
+        this.spawnCooldown = 0;
     }
     spawnChest(x, y) {
         this.chests.push({
@@ -22,17 +24,26 @@ class ChestSystem {
             opened: false
         });
     }
-    onEnemyKilled(x, y, isBoss, isElite, baseChance, bossBonus) {
-        if (isElite || isBoss) {
-            this.spawnChest(x, y);
+    onEnemyKilled(x, y, isBoss, isElite, baseChance, eliteBonus, minSpawnGap = 0) {
+        const safeMinGap = Math.max(0, minSpawnGap || 0);
+        if (this.spawnCooldown > 0 && !isBoss) {
             return;
         }
-        const chance = isBoss ? Math.min(1, baseChance + bossBonus) : baseChance;
+        if (isBoss) {
+            this.spawnChest(x, y);
+            this.spawnCooldown = safeMinGap;
+            return;
+        }
+        const chance = Math.min(1, Math.max(0, baseChance + (isElite ? eliteBonus : 0)));
         if (Math.random() < chance) {
             this.spawnChest(x, y);
+            this.spawnCooldown = safeMinGap;
         }
     }
     update(dt) {
+        if (this.spawnCooldown > 0) {
+            this.spawnCooldown = Math.max(0, this.spawnCooldown - dt);
+        }
         for (let i = this.chests.length - 1; i >= 0; i -= 1) {
             const chest = this.chests[i];
             chest.life -= dt;

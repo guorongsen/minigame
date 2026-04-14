@@ -43,7 +43,7 @@ class WeaponSystem {
                 const level = player.getWeaponLevel(baseId);
                 const cooldown = this.calcCooldown(weapon.cooldown, level, player.getCooldownMultiplier());
                 this.cooldownByBase[baseId] += cooldown;
-                this.castWeapon(weaponId, level, player, enemies, effectSystem);
+                this.castWeapon(baseId, weaponId, level, player, enemies, effectSystem);
             }
         }
         this.updateProjectiles(dt);
@@ -60,94 +60,340 @@ class WeaponSystem {
     calcDamage(base, level, playerDamageMul) {
         return base * (1 + (level - 1) * 0.26) * playerDamageMul;
     }
-    castWeapon(weaponId, level, player, enemies, effectSystem) {
+    castWeapon(baseWeaponId, weaponId, level, player, enemies, effectSystem) {
         const weapon = ConfigManager_1.ConfigManager.getInstance().getWeapon(weaponId);
-        const damage = this.calcDamage(weapon.damage, level, player.getDamageMultiplier());
+        const baseMul = player.getDamageMultiplier();
+        const weaponMul = player.getWeaponDamageMultiplier(baseWeaponId);
+        const damage = this.calcDamage(weapon.damage, level, baseMul * weaponMul);
         const target = this.findNearestEnemy(player.x, player.y, enemies);
         const castElement = this.pickElement(player);
+        const splitThrow = player.hasWeaponSkill(baseWeaponId, "split_throw");
+        const pierceEdge = player.hasWeaponSkill(baseWeaponId, "pierce_edge");
+        const blastCore = player.hasWeaponSkill(baseWeaponId, "blast_core");
+        const twinCast = player.hasWeaponSkill(baseWeaponId, "twin_cast");
+        const echoWave = player.hasWeaponSkill(baseWeaponId, "echo_wave");
+        const wideField = player.hasWeaponSkill(baseWeaponId, "wide_field");
+        const focusBeam = player.hasWeaponSkill(baseWeaponId, "focus_beam");
+        const sideBeam = player.hasWeaponSkill(baseWeaponId, "side_beam");
+        const comboStrike = player.hasWeaponSkill(baseWeaponId, "combo_strike");
+        const guardWave = player.hasWeaponSkill(baseWeaponId, "guard_wave");
+        const swiftThrow = player.hasWeaponSkill(baseWeaponId, "swift_throw");
+        const giantBlade = player.hasWeaponSkill(baseWeaponId, "giant_blade");
+        const phantomOrbit = player.hasWeaponSkill(baseWeaponId, "phantom_orbit");
+        const ignitionBoost = player.hasWeaponSkill(baseWeaponId, "ignition_boost");
+        const magmaPool = player.hasWeaponSkill(baseWeaponId, "magma_pool");
+        const meteorSwarm = player.hasWeaponSkill(baseWeaponId, "meteor_swarm");
+        const seismicForce = player.hasWeaponSkill(baseWeaponId, "seismic_force");
+        const pulseChain = player.hasWeaponSkill(baseWeaponId, "pulse_chain");
+        const gravityWell = player.hasWeaponSkill(baseWeaponId, "gravity_well");
+        const overchargeCore = player.hasWeaponSkill(baseWeaponId, "overcharge_core");
+        const longOptics = player.hasWeaponSkill(baseWeaponId, "long_optics");
+        const prismBurst = player.hasWeaponSkill(baseWeaponId, "prism_burst");
+        const heavyFist = player.hasWeaponSkill(baseWeaponId, "heavy_fist");
+        const dashDrive = player.hasWeaponSkill(baseWeaponId, "dash_drive");
+        const quakeKnuckle = player.hasWeaponSkill(baseWeaponId, "quake_knuckle");
+        const extraPierce = pierceEdge ? 1 : 0;
+        const knifeDamageMul = giantBlade ? 1.12 : 1;
+        const knifeSpeedOffset = swiftThrow ? 64 : 0;
+        const fireDamageMul = ignitionBoost ? 1.12 : 1;
+        const fireSpeedOffset = ignitionBoost ? 36 : 0;
+        const shockDamageMul = seismicForce ? 1.12 : 1;
+        const laserDamageMul = overchargeCore ? 1.12 : 1;
+        const laserRangeMul = longOptics ? 1.18 : 1;
+        const punchDamageMul = heavyFist ? 1.12 : 1;
+        const punchRangeMul = dashDrive ? 1.15 : 1;
+        const punchRadiusMul = heavyFist ? 1.14 : 1;
         switch (weapon.pattern) {
             case "knife":
                 if (target) {
-                    this.spawnProjectileToward(weaponId, player.x, player.y, target.x, target.y, damage, level, castElement);
+                    const knifeDamage = damage * knifeDamageMul;
+                    if (splitThrow) {
+                        this.spawnFanProjectiles(weaponId, player.x, player.y, target.x, target.y, knifeDamage, level, 3, 0.2, castElement, extraPierce, knifeSpeedOffset);
+                    }
+                    else {
+                        this.spawnProjectileToward(weaponId, player.x, player.y, target.x, target.y, knifeDamage, level, castElement, knifeSpeedOffset, undefined, extraPierce);
+                    }
+                    if (phantomOrbit) {
+                        this.spawnCircleArea(weaponId, player.x, player.y, 30 + level * 1.2, knifeDamage * 0.32, 0.16, castElement);
+                    }
                 }
                 break;
             case "fireball":
                 if (target) {
-                    this.spawnProjectileToward(weaponId, player.x, player.y, target.x, target.y, damage, level, castElement, 0, 46 + level * 6);
+                    const fireDamage = damage * fireDamageMul;
+                    const splash = (46 + level * 6) * (blastCore ? 1.25 : 1);
+                    this.spawnProjectileToward(weaponId, player.x, player.y, target.x, target.y, fireDamage, level, castElement, fireSpeedOffset, splash);
+                    if (twinCast) {
+                        const dir = (0, MathUtil_1.normalize)({ x: target.x - player.x, y: target.y - player.y });
+                        const side = Math.sin(this.orbitAngle * 3) >= 0 ? 1 : -1;
+                        this.spawnProjectileToward(weaponId, player.x, player.y, target.x - dir.y * 42 * side, target.y + dir.x * 42 * side, fireDamage * 0.62, level, castElement, -24 + fireSpeedOffset, splash * 0.74);
+                    }
+                    if (meteorSwarm) {
+                        const dir = (0, MathUtil_1.normalize)({ x: target.x - player.x, y: target.y - player.y });
+                        for (const side of [-1, 1]) {
+                            this.spawnProjectileToward(weaponId, player.x, player.y, target.x + dir.y * 50 * side, target.y - dir.x * 50 * side, fireDamage * 0.46, level, castElement, -18 + fireSpeedOffset, splash * 0.66);
+                        }
+                    }
+                    if (magmaPool) {
+                        this.spawnCircleArea(weaponId, target.x, target.y, 30 + level * 2.4, fireDamage * 0.28, 0.38, castElement);
+                    }
                 }
                 break;
             case "shockwave":
-                this.spawnCircleArea(weaponId, player.x, player.y, (weapon.radius || 90) + level * 10, damage, 0.18, castElement);
+                {
+                    const shockDamage = damage * shockDamageMul;
+                    const radiusMul = wideField ? 1.2 : 1;
+                    const radius = ((weapon.radius || 90) + level * 10) * radiusMul;
+                    this.spawnCircleArea(weaponId, player.x, player.y, radius, shockDamage, 0.18, castElement);
+                    if (echoWave) {
+                        this.spawnCircleArea(weaponId, player.x, player.y, radius * 0.66, shockDamage * 0.55, 0.24, castElement);
+                    }
+                    if (pulseChain) {
+                        this.spawnCircleArea(weaponId, player.x, player.y, radius * 0.52, shockDamage * 0.34, 0.2, castElement);
+                        this.spawnCircleArea(weaponId, player.x, player.y, radius * 0.82, shockDamage * 0.3, 0.26, castElement);
+                    }
+                    if (gravityWell) {
+                        this.spawnCircleArea(weaponId, player.x, player.y, radius * 0.44, shockDamage * 0.26, 0.5, castElement);
+                    }
+                }
                 break;
             case "laser":
                 if (target) {
-                    this.spawnBeam(weaponId, player.x, player.y, target.x, target.y, (weapon.range || 360) + level * 10, (weapon.beamWidth || 16) + level, damage, 0.12, castElement);
+                    const range = ((weapon.range || 360) + level * 10) * laserRangeMul;
+                    const width = ((weapon.beamWidth || 16) + level) * (focusBeam ? 1.16 : 1);
+                    const beamDamage = damage * (focusBeam ? 1.08 : 1) * laserDamageMul;
+                    this.spawnBeam(weaponId, player.x, player.y, target.x, target.y, range, width, beamDamage, 0.12, castElement);
+                    if (sideBeam) {
+                        const dir = (0, MathUtil_1.normalize)({ x: target.x - player.x, y: target.y - player.y });
+                        const angle = Math.atan2(dir.y, dir.x);
+                        const sideAngles = [angle - 0.2, angle + 0.2];
+                        for (const a of sideAngles) {
+                            this.spawnBeam(weaponId, player.x, player.y, player.x + Math.cos(a) * range, player.y + Math.sin(a) * range, range, width * 0.72, beamDamage * 0.5, 0.12, castElement);
+                        }
+                    }
+                    if (prismBurst) {
+                        this.spawnCircleArea(weaponId, target.x, target.y, 32 + level * 2.4, beamDamage * 0.4, 0.18, castElement);
+                    }
                 }
                 break;
             case "punch":
-                this.castPunch(weaponId, player, target, weapon.range || 100, (weapon.radius || 52) + level * 4, damage, castElement);
+                {
+                    const punchDamage = damage * punchDamageMul;
+                    const forwardDistance = (weapon.range || 100) * punchRangeMul;
+                    const radius = ((weapon.radius || 52) + level * 4) * punchRadiusMul;
+                    this.castPunch(weaponId, player, target, forwardDistance, radius, punchDamage, castElement);
+                    if (comboStrike && target) {
+                        this.castPunch(weaponId, player, target, forwardDistance * 0.92, radius * 0.82, punchDamage * 0.56, castElement);
+                    }
+                    if (guardWave) {
+                        this.spawnCircleArea(weaponId, player.x, player.y, radius * 0.72, punchDamage * 0.4, 0.12, castElement);
+                    }
+                    if (quakeKnuckle) {
+                        const quakeX = target ? target.x : player.x;
+                        const quakeY = target ? target.y : player.y;
+                        this.spawnCircleArea(weaponId, quakeX, quakeY, radius * 0.72, punchDamage * 0.44, 0.14, castElement);
+                    }
+                }
                 break;
             case "blade_storm":
-                for (let i = 0; i < 4; i += 1) {
-                    const angle = this.orbitAngle + i * (Math.PI / 2);
-                    const px = player.x + Math.cos(angle) * 70;
-                    const py = player.y + Math.sin(angle) * 70;
-                    this.spawnCircleArea(weaponId, px, py, 26, damage, 0.24, castElement);
+                {
+                    const stormDamage = damage * knifeDamageMul;
+                    const stormRadius = 26 * (giantBlade ? 1.14 : 1);
+                    for (let i = 0; i < 4; i += 1) {
+                        const angle = this.orbitAngle + i * (Math.PI / 2);
+                        const px = player.x + Math.cos(angle) * 70;
+                        const py = player.y + Math.sin(angle) * 70;
+                        this.spawnCircleArea(weaponId, px, py, stormRadius, stormDamage, 0.24, castElement);
+                    }
+                    if (phantomOrbit) {
+                        this.spawnCircleArea(weaponId, player.x, player.y, 36, stormDamage * 0.36, 0.16, castElement);
+                    }
+                    if (guardWave) {
+                        this.spawnCircleArea(weaponId, player.x, player.y, 42, stormDamage * 0.32, 0.14, castElement);
+                    }
                 }
                 break;
             case "arc_knives":
                 if (target) {
-                    this.spawnFanProjectiles(weaponId, player.x, player.y, target.x, target.y, damage, level, 3, 0.26, castElement);
+                    const arcCount = (splitThrow ? 5 : 3) + (phantomOrbit ? 1 : 0);
+                    this.spawnFanProjectiles(weaponId, player.x, player.y, target.x, target.y, damage * knifeDamageMul, level, arcCount, 0.26, castElement, extraPierce, knifeSpeedOffset);
                 }
                 break;
             case "chain_fireball":
                 if (target) {
-                    this.spawnProjectileToward(weaponId, player.x, player.y, target.x, target.y, damage, level, castElement, 0, 70 + level * 8);
+                    const fireDamage = damage * fireDamageMul;
+                    const splash = (70 + level * 8) * (blastCore ? 1.22 : 1);
+                    this.spawnProjectileToward(weaponId, player.x, player.y, target.x, target.y, fireDamage, level, castElement, fireSpeedOffset, splash);
+                    if (twinCast) {
+                        this.spawnProjectileToward(weaponId, player.x, player.y, target.x + 28, target.y - 20, fireDamage * 0.6, level, castElement, -18 + fireSpeedOffset, splash * 0.74);
+                    }
+                    if (meteorSwarm) {
+                        for (const side of [-1, 1]) {
+                            this.spawnProjectileToward(weaponId, player.x, player.y, target.x + 42 * side, target.y - 12 * side, fireDamage * 0.42, level, castElement, -26 + fireSpeedOffset, splash * 0.64);
+                        }
+                    }
+                    if (magmaPool) {
+                        this.spawnCircleArea(weaponId, target.x, target.y, 34 + level * 2.6, fireDamage * 0.3, 0.42, castElement);
+                    }
                 }
                 break;
             case "frostfire_orb":
                 if (target) {
-                    this.spawnProjectileToward(weaponId, player.x, player.y, target.x, target.y, damage, level, castElement, -70, 82 + level * 9);
+                    const fireDamage = damage * fireDamageMul;
+                    const splash = (82 + level * 9) * (blastCore ? 1.2 : 1);
+                    this.spawnProjectileToward(weaponId, player.x, player.y, target.x, target.y, fireDamage, level, castElement, -70 + fireSpeedOffset, splash);
+                    if (twinCast) {
+                        this.spawnProjectileToward(weaponId, player.x, player.y, target.x - 24, target.y + 24, fireDamage * 0.62, level, castElement, -96 + fireSpeedOffset, splash * 0.74);
+                    }
+                    if (meteorSwarm) {
+                        for (const side of [-1, 1]) {
+                            this.spawnProjectileToward(weaponId, player.x, player.y, target.x + 36 * side, target.y + 18 * side, fireDamage * 0.4, level, castElement, -110 + fireSpeedOffset, splash * 0.6);
+                        }
+                    }
+                    if (magmaPool) {
+                        this.spawnCircleArea(weaponId, target.x, target.y, 36 + level * 2.8, fireDamage * 0.28, 0.46, castElement);
+                    }
                 }
                 break;
             case "ice_quake":
-                this.spawnCircleArea(weaponId, player.x, player.y, (weapon.radius || 130) + level * 12, damage, 0.2, castElement);
-                this.spawnCircleArea(weaponId, player.x, player.y, (weapon.radius || 130) * 0.6, damage * 0.7, 0.3, castElement);
+                {
+                    const shockDamage = damage * shockDamageMul;
+                    const radiusMul = wideField ? 1.18 : 1;
+                    const radius = ((weapon.radius || 130) + level * 12) * radiusMul;
+                    this.spawnCircleArea(weaponId, player.x, player.y, radius, shockDamage, 0.2, castElement);
+                    this.spawnCircleArea(weaponId, player.x, player.y, radius * 0.6, shockDamage * 0.7, 0.3, castElement);
+                    if (echoWave) {
+                        this.spawnCircleArea(weaponId, player.x, player.y, radius * 0.82, shockDamage * 0.44, 0.3, castElement);
+                    }
+                    if (pulseChain) {
+                        this.spawnCircleArea(weaponId, player.x, player.y, radius * 0.46, shockDamage * 0.32, 0.2, castElement);
+                        this.spawnCircleArea(weaponId, player.x, player.y, radius * 0.9, shockDamage * 0.3, 0.32, castElement);
+                    }
+                    if (gravityWell) {
+                        this.spawnCircleArea(weaponId, player.x, player.y, radius * 0.4, shockDamage * 0.24, 0.54, castElement);
+                    }
+                }
                 break;
             case "toxic_wave":
-                this.spawnCircleArea(weaponId, player.x, player.y, (weapon.radius || 110) + level * 8, damage, 0.22, castElement);
-                this.spawnCircleArea(weaponId, player.x, player.y, (weapon.radius || 110) * 0.7, damage * 0.6, 0.5, castElement);
+                {
+                    const shockDamage = damage * shockDamageMul;
+                    const radiusMul = wideField ? 1.18 : 1;
+                    const radius = ((weapon.radius || 110) + level * 8) * radiusMul;
+                    this.spawnCircleArea(weaponId, player.x, player.y, radius, shockDamage, 0.22, castElement);
+                    this.spawnCircleArea(weaponId, player.x, player.y, radius * 0.7, shockDamage * 0.6, 0.5, castElement);
+                    if (echoWave) {
+                        this.spawnCircleArea(weaponId, player.x, player.y, radius * 0.52, shockDamage * 0.4, 0.3, castElement);
+                    }
+                    if (pulseChain) {
+                        this.spawnCircleArea(weaponId, player.x, player.y, radius * 0.86, shockDamage * 0.3, 0.28, castElement);
+                    }
+                    if (gravityWell) {
+                        this.spawnCircleArea(weaponId, player.x, player.y, radius * 0.42, shockDamage * 0.26, 0.56, castElement);
+                    }
+                }
                 break;
             case "corrosion_laser":
                 if (target) {
-                    this.spawnBeam(weaponId, player.x, player.y, target.x, target.y, (weapon.range || 450) + level * 12, (weapon.beamWidth || 22) + level * 1.5, damage, 0.16, castElement);
-                    this.spawnBeam(weaponId, player.x, player.y, target.x + 20, target.y - 20, weapon.range || 450, (weapon.beamWidth || 22) * 0.65, damage * 0.6, 0.16, castElement);
+                    const range = ((weapon.range || 450) + level * 12) * laserRangeMul;
+                    const width = ((weapon.beamWidth || 22) + level * 1.5) * (focusBeam ? 1.14 : 1);
+                    const beamDamage = damage * (focusBeam ? 1.06 : 1) * laserDamageMul;
+                    this.spawnBeam(weaponId, player.x, player.y, target.x, target.y, range, width, beamDamage, 0.16, castElement);
+                    this.spawnBeam(weaponId, player.x, player.y, target.x + 20, target.y - 20, (weapon.range || 450) * laserRangeMul, width * 0.65, beamDamage * 0.6, 0.16, castElement);
+                    if (sideBeam) {
+                        const dir = (0, MathUtil_1.normalize)({ x: target.x - player.x, y: target.y - player.y });
+                        const angle = Math.atan2(dir.y, dir.x);
+                        for (const side of [-0.24, 0.24]) {
+                            const a = angle + side;
+                            this.spawnBeam(weaponId, player.x, player.y, player.x + Math.cos(a) * range, player.y + Math.sin(a) * range, range, width * 0.58, beamDamage * 0.36, 0.16, castElement);
+                        }
+                    }
+                    if (prismBurst) {
+                        this.spawnCircleArea(weaponId, target.x, target.y, 38 + level * 2.6, beamDamage * 0.38, 0.2, castElement);
+                    }
                 }
                 break;
             case "solar_laser":
                 if (target) {
-                    this.spawnBeam(weaponId, player.x, player.y, target.x, target.y, (weapon.range || 500) + level * 14, (weapon.beamWidth || 20) + level, damage, 0.13, castElement);
-                    this.spawnCircleArea(weaponId, target.x, target.y, 48 + level * 5, damage * 0.7, 0.2, castElement);
+                    const range = ((weapon.range || 500) + level * 14) * laserRangeMul;
+                    const width = ((weapon.beamWidth || 20) + level) * (focusBeam ? 1.14 : 1);
+                    const beamDamage = damage * (focusBeam ? 1.08 : 1) * laserDamageMul;
+                    this.spawnBeam(weaponId, player.x, player.y, target.x, target.y, range, width, beamDamage, 0.13, castElement);
+                    this.spawnCircleArea(weaponId, target.x, target.y, 48 + level * 5, damage * 0.56, 0.18, castElement);
+                    if (sideBeam) {
+                        const dir = (0, MathUtil_1.normalize)({ x: target.x - player.x, y: target.y - player.y });
+                        const angle = Math.atan2(dir.y, dir.x);
+                        for (const side of [-0.22, 0.22]) {
+                            const a = angle + side;
+                            this.spawnBeam(weaponId, player.x, player.y, player.x + Math.cos(a) * range, player.y + Math.sin(a) * range, range, width * 0.62, beamDamage * 0.42, 0.13, castElement);
+                        }
+                    }
+                    if (prismBurst) {
+                        this.spawnCircleArea(weaponId, target.x, target.y, 44 + level * 3, beamDamage * 0.4, 0.2, castElement);
+                    }
                 }
                 break;
             case "flame_punch":
-                this.castPunch(weaponId, player, target, weapon.range || 150, (weapon.radius || 80) + level * 5, damage, castElement);
-                this.spawnCircleArea(weaponId, player.x, player.y, 55 + level * 4, damage * 0.45, 0.12, castElement);
+                {
+                    const punchDamage = damage * punchDamageMul;
+                    const forwardDistance = (weapon.range || 150) * punchRangeMul;
+                    const radius = ((weapon.radius || 80) + level * 5) * punchRadiusMul;
+                    this.castPunch(weaponId, player, target, forwardDistance, radius, punchDamage, castElement);
+                    this.spawnCircleArea(weaponId, player.x, player.y, 55 + level * 4, punchDamage * 0.45, 0.12, castElement);
+                    if (comboStrike && target) {
+                        this.castPunch(weaponId, player, target, forwardDistance * 0.86, radius * 0.8, punchDamage * 0.54, castElement);
+                    }
+                    if (guardWave) {
+                        this.spawnCircleArea(weaponId, player.x, player.y, 48 + level * 3, punchDamage * 0.38, 0.12, castElement);
+                    }
+                    if (quakeKnuckle) {
+                        const quakeX = target ? target.x : player.x;
+                        const quakeY = target ? target.y : player.y;
+                        this.spawnCircleArea(weaponId, quakeX, quakeY, radius * 0.68, punchDamage * 0.44, 0.14, castElement);
+                    }
+                }
                 break;
             case "storm_punch":
-                this.castPunch(weaponId, player, target, weapon.range || 150, (weapon.radius || 76) + level * 4, damage, castElement);
-                if (target) {
-                    this.spawnCircleArea(weaponId, target.x, target.y, 45, damage * 0.65, 0.15, castElement);
+                {
+                    const punchDamage = damage * punchDamageMul;
+                    const forwardDistance = (weapon.range || 150) * punchRangeMul;
+                    const radius = ((weapon.radius || 76) + level * 4) * punchRadiusMul;
+                    this.castPunch(weaponId, player, target, forwardDistance, radius, punchDamage, castElement);
+                    if (target) {
+                        this.spawnCircleArea(weaponId, target.x, target.y, 45, punchDamage * 0.55, 0.14, castElement);
+                    }
+                    if (comboStrike && target) {
+                        this.castPunch(weaponId, player, target, forwardDistance * 0.9, radius * 0.82, punchDamage * 0.54, castElement);
+                    }
+                    if (guardWave) {
+                        this.spawnCircleArea(weaponId, player.x, player.y, 42 + level * 3, punchDamage * 0.38, 0.11, castElement);
+                    }
+                    if (quakeKnuckle) {
+                        const quakeX = target ? target.x : player.x;
+                        const quakeY = target ? target.y : player.y;
+                        this.spawnCircleArea(weaponId, quakeX, quakeY, radius * 0.66, punchDamage * 0.46, 0.14, castElement);
+                    }
                 }
                 break;
             case "prism_laser":
                 if (target) {
-                    this.spawnPrismLaser(weaponId, player.x, player.y, target.x, target.y, (weapon.range || 420) + level * 8, weapon.beamWidth || 12, damage, castElement);
+                    const range = ((weapon.range || 420) + level * 8) * laserRangeMul;
+                    const width = (weapon.beamWidth || 12) * (focusBeam ? 1.16 : 1);
+                    const beamDamage = damage * (focusBeam ? 1.08 : 1) * laserDamageMul;
+                    this.spawnPrismLaser(weaponId, player.x, player.y, target.x, target.y, range, width, beamDamage, castElement);
+                    if (sideBeam) {
+                        this.spawnBeam(weaponId, player.x, player.y, target.x + 38, target.y + 18, range, width * 0.7, beamDamage * 0.4, 0.15, castElement);
+                    }
+                    if (prismBurst) {
+                        this.spawnCircleArea(weaponId, target.x, target.y, 36 + level * 2.6, beamDamage * 0.38, 0.18, castElement);
+                    }
                 }
                 break;
             case "shadow_daggers":
                 if (target) {
-                    this.spawnFanProjectiles(weaponId, player.x, player.y, target.x, target.y, damage, level, weapon.shots || 5, 0.42, castElement);
+                    this.spawnFanProjectiles(weaponId, player.x, player.y, target.x, target.y, damage * knifeDamageMul, level, (weapon.shots || 5) + (splitThrow ? 2 : 0), 0.42, castElement, extraPierce, knifeSpeedOffset);
+                    if (phantomOrbit) {
+                        this.spawnCircleArea(weaponId, player.x, player.y, 32 + level * 1.6, damage * knifeDamageMul * 0.3, 0.16, castElement);
+                    }
                 }
                 break;
             default:
@@ -164,7 +410,7 @@ class WeaponSystem {
         this.elementCursor += 1;
         return element;
     }
-    spawnProjectileToward(weaponId, x, y, tx, ty, damage, level, element, speedOffset = 0, splashRadius) {
+    spawnProjectileToward(weaponId, x, y, tx, ty, damage, level, element, speedOffset = 0, splashRadius, extraPierce = 0) {
         var _a;
         const weapon = ConfigManager_1.ConfigManager.getInstance().getWeapon(weaponId);
         const dir = (0, MathUtil_1.normalize)({ x: tx - x, y: ty - y });
@@ -180,20 +426,20 @@ class WeaponSystem {
             damage,
             life: weapon.life || 1.2,
             color: weapon.color,
-            pierce: ((_a = weapon.pierce) !== null && _a !== void 0 ? _a : 0) + Math.floor(level / 3),
+            pierce: ((_a = weapon.pierce) !== null && _a !== void 0 ? _a : 0) + Math.floor(level / 3) + Math.max(0, extraPierce),
             splashRadius,
             element,
             hitIds: new Set()
         });
     }
-    spawnFanProjectiles(weaponId, x, y, tx, ty, damage, level, count, spread, element) {
+    spawnFanProjectiles(weaponId, x, y, tx, ty, damage, level, count, spread, element, extraPierce = 0, speedOffset = 0) {
         const weapon = ConfigManager_1.ConfigManager.getInstance().getWeapon(weaponId);
         const dir = (0, MathUtil_1.normalize)({ x: tx - x, y: ty - y });
         const baseAngle = Math.atan2(dir.y, dir.x);
         const totalSpread = spread * (count - 1);
         for (let i = 0; i < count; i += 1) {
             const angle = baseAngle - totalSpread * 0.5 + spread * i;
-            const speed = (weapon.speed || 340) + level * 16;
+            const speed = (weapon.speed || 340) + level * 16 + speedOffset;
             this.projectiles.push({
                 id: attackAutoId++,
                 weaponId,
@@ -202,10 +448,10 @@ class WeaponSystem {
                 vx: Math.cos(angle) * speed,
                 vy: Math.sin(angle) * speed,
                 radius: (weapon.projectileRadius || 5) + level * 0.25,
-                damage: damage * 0.72,
+                damage: damage * 0.66,
                 life: weapon.life || 1.2,
                 color: weapon.color,
-                pierce: (weapon.pierce || 1) + 1,
+                pierce: (weapon.pierce || 1) + 1 + Math.max(0, extraPierce),
                 splashRadius: weapon.pattern === "chain_fireball" ? 58 + level * 6 : undefined,
                 element,
                 hitIds: new Set()
@@ -310,7 +556,7 @@ class WeaponSystem {
             p.x += p.vx * dt;
             p.y += p.vy * dt;
             if (p.life <= 0) {
-                this.projectiles.splice(i, 1);
+                this.removeProjectileAt(i);
             }
         }
     }
@@ -319,9 +565,29 @@ class WeaponSystem {
             const area = this.areas[i];
             area.life -= dt;
             if (area.life <= 0) {
-                this.areas.splice(i, 1);
+                this.removeAreaAt(i);
             }
         }
+    }
+    removeProjectileAt(index) {
+        if (index < 0 || index >= this.projectiles.length) {
+            return;
+        }
+        const lastIndex = this.projectiles.length - 1;
+        if (index !== lastIndex) {
+            this.projectiles[index] = this.projectiles[lastIndex];
+        }
+        this.projectiles.pop();
+    }
+    removeAreaAt(index) {
+        if (index < 0 || index >= this.areas.length) {
+            return;
+        }
+        const lastIndex = this.areas.length - 1;
+        if (index !== lastIndex) {
+            this.areas[index] = this.areas[lastIndex];
+        }
+        this.areas.pop();
     }
     render(ctx) {
         for (const p of this.projectiles) {

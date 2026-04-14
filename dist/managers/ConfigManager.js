@@ -4,6 +4,8 @@ exports.ConfigManager = void 0;
 const enemyConfig_1 = require("../Data/enemyConfig");
 const elementConfig_1 = require("../Data/elementConfig");
 const evolutionConfig_1 = require("../Data/evolutionConfig");
+const stageConfig_1 = require("../Data/stageConfig");
+const storyChapterConfig_1 = require("../Data/storyChapterConfig");
 const dailyChallengeConfig_1 = require("../Data/dailyChallengeConfig");
 const characterMutationConfig_1 = require("../Data/characterMutationConfig");
 const upgradeConfig_1 = require("../Data/upgradeConfig");
@@ -50,6 +52,12 @@ class ConfigManager {
     }
     getBossConfig() {
         return enemyConfig_1.bossConfig;
+    }
+    getStageConfigs() {
+        return stageConfig_1.stageConfigList;
+    }
+    getStoryChapters() {
+        return storyChapterConfig_1.storyChapterConfigList;
     }
     getUpgradeDefinitions() {
         return upgradeConfig_1.upgradeDefinitions;

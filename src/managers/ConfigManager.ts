@@ -1,6 +1,8 @@
 ﻿import { bossConfig, enemyConfigList } from "../Data/enemyConfig";
 import { elementConfigList, elementConfigMap } from "../Data/elementConfig";
 import { evolutionConfigList } from "../Data/evolutionConfig";
+import { stageConfigList } from "../Data/stageConfig";
+import { storyChapterConfigList } from "../Data/storyChapterConfig";
 import { dailyChallengeTemplates } from "../Data/dailyChallengeConfig";
 import { characterMutationFusions, characterMutationGenes } from "../Data/characterMutationConfig";
 import {
@@ -18,6 +20,8 @@ import {
   ElementType,
   EnemyConfig,
   EvolutionConfig,
+  StageConfig,
+  StoryChapterConfig,
   UpgradeDefinition,
   WeaponConfig
 } from "../types";
@@ -77,6 +81,14 @@ export class ConfigManager {
 
   getBossConfig(): EnemyConfig {
     return bossConfig;
+  }
+
+  getStageConfigs(): StageConfig[] {
+    return stageConfigList;
+  }
+
+  getStoryChapters(): StoryChapterConfig[] {
+    return storyChapterConfigList;
   }
 
   getUpgradeDefinitions(): UpgradeDefinition[] {

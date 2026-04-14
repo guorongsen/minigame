@@ -16,6 +16,7 @@ export class InputManager {
   private moveVec: Vec2 = { x: 0, y: 0 };
   private readonly deadZone = 6;
   private readonly maxRadius = 60;
+  private moveSensitivity = 1;
 
   constructor(sceneManager: SceneManager) {
     this.sceneManager = sceneManager;
@@ -38,6 +39,13 @@ export class InputManager {
 
   getTouchPosition(): Vec2 {
     return { x: this.currentX, y: this.currentY };
+  }
+
+  setMoveSensitivity(value: number): void {
+    if (!Number.isFinite(value)) {
+      return;
+    }
+    this.moveSensitivity = Math.max(0.7, Math.min(1.6, value));
   }
 
   private handleTouchStart(event: any): void {
@@ -75,9 +83,10 @@ export class InputManager {
       this.moveVec = { x: 0, y: 0 };
     } else {
       const clamped = clamp(len, 0, this.maxRadius);
+      const intensity = clamp((clamped / this.maxRadius) * this.moveSensitivity, 0, 1);
       this.moveVec = {
-        x: (dx / len) * (clamped / this.maxRadius),
-        y: (dy / len) * (clamped / this.maxRadius)
+        x: (dx / len) * intensity,
+        y: (dy / len) * intensity
       };
     }
 

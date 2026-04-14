@@ -39,6 +39,8 @@ export class Player {
   private frenzyTime = 0;
   private damageImmuneTime = 0;
   private damageImmuneMaxTime = 0;
+  private weaponDamageBonusByBase: Record<string, number> = {};
+  private weaponSkillIdsByBase: Record<string, Set<string>> = {};
 
   private boundWidth: number;
   private boundHeight: number;
@@ -88,6 +90,8 @@ export class Player {
     this.frenzyTime = 0;
     this.damageImmuneTime = 0;
     this.damageImmuneMaxTime = 0;
+    this.weaponDamageBonusByBase = {};
+    this.weaponSkillIdsByBase = {};
 
     this.addWeapon("knife");
   }
@@ -333,6 +337,23 @@ export class Player {
   getDamageMultiplier(): number {
     const frenzyMul = this.isFrenzyActive() ? ConfigManager.getInstance().getBalance().frenzyDamageMul : 1;
     return this.passives.damageMultiplier * frenzyMul;
+  }
+
+  setWeaponUpgradeRuntime(baseWeaponId: string, damageBonus: number, unlockedSkillIds: string[]): void {
+    this.weaponDamageBonusByBase[baseWeaponId] = Math.max(0, damageBonus || 0);
+    this.weaponSkillIdsByBase[baseWeaponId] = new Set(unlockedSkillIds || []);
+  }
+
+  getWeaponDamageMultiplier(baseWeaponId: string): number {
+    return 1 + Math.max(0, this.weaponDamageBonusByBase[baseWeaponId] || 0);
+  }
+
+  hasWeaponSkill(baseWeaponId: string, skillId: string): boolean {
+    const set = this.weaponSkillIdsByBase[baseWeaponId];
+    if (!set) {
+      return false;
+    }
+    return set.has(skillId);
   }
 
   getCooldownMultiplier(): number {

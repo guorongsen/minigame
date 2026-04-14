@@ -1,63 +1,59 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SaveManager = void 0;
+const weaponConfig_1 = require("../Data/weaponConfig");
 const SAVE_KEY = "evolution_survivor_save_v1";
+const SAVE_VERSION = 3;
+const LEGACY_START_BUFF_DNA_COMPENSATION = 18;
 const dailyQuestTemplates = [
     {
         type: "kill",
         title: "清理异变体",
         description: "今日累计击杀 120 个敌人。",
         target: 120,
-        rewardDna: 90,
-        rewardBuffCharge: 0
+        rewardDna: 90
     },
     {
         type: "survive",
         title: "坚持作战",
         description: "今日累计生存 240 秒。",
         target: 240,
-        rewardDna: 100,
-        rewardBuffCharge: 0
+        rewardDna: 100
     },
     {
         type: "evolution",
         title: "完成进化",
         description: "今日触发 2 次武器进化。",
         target: 2,
-        rewardDna: 120,
-        rewardBuffCharge: 1
+        rewardDna: 120
     },
     {
         type: "boss_batch",
         title: "首领猎手",
         description: "今日击破 2 批首领。",
         target: 2,
-        rewardDna: 120,
-        rewardBuffCharge: 0
+        rewardDna: 120
     },
     {
         type: "fusion",
         title: "基因融合",
         description: "今日触发 2 次人物融合。",
         target: 2,
-        rewardDna: 90,
-        rewardBuffCharge: 1
+        rewardDna: 90
     },
     {
         type: "kill",
         title: "暴走清场",
         description: "今日累计击杀 180 个敌人。",
         target: 180,
-        rewardDna: 130,
-        rewardBuffCharge: 0
+        rewardDna: 130
     },
     {
         type: "survive",
         title: "长线拉扯",
         description: "今日累计生存 360 秒。",
         target: 360,
-        rewardDna: 130,
-        rewardBuffCharge: 1
+        rewardDna: 130
     }
 ];
 const metaUpgradeTemplates = [
@@ -94,6 +90,198 @@ const metaUpgradeTemplates = [
         costScale: 1.25
     }
 ];
+const weaponUpgradeTemplates = {
+    knife: {
+        baseWeaponId: "knife",
+        maxLevel: 5,
+        costs: [12, 20, 30, 44, 62],
+        damageBonusPerLevel: 0.07,
+        skills: [
+            {
+                id: "split_throw",
+                title: "裂刃投掷",
+                description: "飞刀改为扇形多发。",
+                unlockLevel: 1
+            },
+            {
+                id: "pierce_edge",
+                title: "穿刺锋刃",
+                description: "飞刀类攻击获得额外穿透。",
+                unlockLevel: 2
+            },
+            {
+                id: "swift_throw",
+                title: "疾速投掷",
+                description: "飞刀飞行速度大幅提升。",
+                unlockLevel: 3
+            },
+            {
+                id: "giant_blade",
+                title: "巨刃强化",
+                description: "飞刀体积和威力提升。",
+                unlockLevel: 4
+            },
+            {
+                id: "phantom_orbit",
+                title: "幻影环刃",
+                description: "每次出手会在身边追加环形刃波。",
+                unlockLevel: 5
+            }
+        ]
+    },
+    fireball: {
+        baseWeaponId: "fireball",
+        maxLevel: 5,
+        costs: [14, 22, 32, 46, 64],
+        damageBonusPerLevel: 0.08,
+        skills: [
+            {
+                id: "blast_core",
+                title: "爆裂核心",
+                description: "火球爆炸半径提升。",
+                unlockLevel: 1
+            },
+            {
+                id: "twin_cast",
+                title: "双重咏唱",
+                description: "每次施放额外发射一枚副火球。",
+                unlockLevel: 2
+            },
+            {
+                id: "ignition_boost",
+                title: "点燃增幅",
+                description: "火球伤害与速度提升。",
+                unlockLevel: 3
+            },
+            {
+                id: "magma_pool",
+                title: "熔火残留",
+                description: "命中点附近留下短暂灼烧区域。",
+                unlockLevel: 4
+            },
+            {
+                id: "meteor_swarm",
+                title: "流星齐射",
+                description: "额外追加两枚偏转火球。",
+                unlockLevel: 5
+            }
+        ]
+    },
+    shockwave: {
+        baseWeaponId: "shockwave",
+        maxLevel: 5,
+        costs: [13, 21, 31, 45, 63],
+        damageBonusPerLevel: 0.08,
+        skills: [
+            {
+                id: "echo_wave",
+                title: "回响冲击",
+                description: "冲击波会追加一圈次级震荡。",
+                unlockLevel: 1
+            },
+            {
+                id: "wide_field",
+                title: "震域扩展",
+                description: "冲击波作用范围显著提升。",
+                unlockLevel: 2
+            },
+            {
+                id: "seismic_force",
+                title: "地震之力",
+                description: "冲击波基础伤害提升。",
+                unlockLevel: 3
+            },
+            {
+                id: "pulse_chain",
+                title: "脉冲连锁",
+                description: "冲击波追加更多连续脉冲。",
+                unlockLevel: 4
+            },
+            {
+                id: "gravity_well",
+                title: "引力井",
+                description: "中心区域产生持续压制震场。",
+                unlockLevel: 5
+            }
+        ]
+    },
+    laser: {
+        baseWeaponId: "laser",
+        maxLevel: 5,
+        costs: [15, 24, 35, 50, 68],
+        damageBonusPerLevel: 0.09,
+        skills: [
+            {
+                id: "focus_beam",
+                title: "聚焦棱镜",
+                description: "激光更粗并附带额外威力。",
+                unlockLevel: 1
+            },
+            {
+                id: "side_beam",
+                title: "侧向偏振",
+                description: "激光额外产生两道侧向副束。",
+                unlockLevel: 2
+            },
+            {
+                id: "overcharge_core",
+                title: "过载核心",
+                description: "激光类攻击伤害进一步提升。",
+                unlockLevel: 3
+            },
+            {
+                id: "long_optics",
+                title: "长距光学",
+                description: "激光射程显著增加。",
+                unlockLevel: 4
+            },
+            {
+                id: "prism_burst",
+                title: "棱镜爆发",
+                description: "激光命中点触发额外爆裂。",
+                unlockLevel: 5
+            }
+        ]
+    },
+    punch: {
+        baseWeaponId: "punch",
+        maxLevel: 5,
+        costs: [12, 20, 29, 42, 58],
+        damageBonusPerLevel: 0.08,
+        skills: [
+            {
+                id: "combo_strike",
+                title: "连打拳风",
+                description: "每次出拳追加一次补拳。",
+                unlockLevel: 1
+            },
+            {
+                id: "guard_wave",
+                title: "守势震波",
+                description: "出拳时会在身边释放防守震荡。",
+                unlockLevel: 2
+            },
+            {
+                id: "heavy_fist",
+                title: "重拳压制",
+                description: "拳风伤害和范围提升。",
+                unlockLevel: 3
+            },
+            {
+                id: "dash_drive",
+                title: "突进拳驱",
+                description: "拳风前冲距离增加。",
+                unlockLevel: 4
+            },
+            {
+                id: "quake_knuckle",
+                title: "震地拳骨",
+                description: "落点会追加一次震地冲击。",
+                unlockLevel: 5
+            }
+        ]
+    }
+};
 const defaultMetaUpgradeLevels = {
     damage: 0,
     maxHp: 0,
@@ -103,27 +291,57 @@ const defaultMetaUpgradeLevels = {
 const META_RESET_REFUND_RATIO = 0.85;
 const starterPlanPriority = ["maxHp", "pickup", "damage", "moveSpeed"];
 const hardcorePlanPriority = ["damage", "moveSpeed", "maxHp", "pickup"];
+const defaultSettings = {
+    sfxEnabled: true,
+    vibrationEnabled: true,
+    performanceMode: "balanced",
+    moveSensitivity: 1
+};
+const createEmptyWeaponFragments = () => {
+    const map = {};
+    for (const baseId of weaponConfig_1.baseWeaponIds) {
+        map[baseId] = 0;
+    }
+    return map;
+};
+const createEmptyWeaponUpgradeLevels = () => {
+    const map = {};
+    for (const baseId of weaponConfig_1.baseWeaponIds) {
+        map[baseId] = 0;
+    }
+    return map;
+};
+const createEmptyStoryChapterStars = () => {
+    return {};
+};
 const defaultSaveData = {
+    version: SAVE_VERSION,
     unlockedEvolutionIds: [],
+    storyUnlockedChapterLevel: 1,
+    storyChapterBestStars: createEmptyStoryChapterStars(),
+    storyChapterFirstClearIds: [],
     bestSurvivalTime: 0,
     totalKills: 0,
     totalRuns: 0,
     tutorialSeen: false,
     debugMode: false,
     dailyChestClaimDate: "",
-    freeStartBuffCharges: 0,
     dna: 0,
+    weaponFragments: createEmptyWeaponFragments(),
+    weaponUpgradeLevels: createEmptyWeaponUpgradeLevels(),
     weaponMasteryExp: {},
     dailyQuestDate: "",
     dailyQuests: [],
-    metaUpgradeLevels: Object.assign({}, defaultMetaUpgradeLevels)
+    metaUpgradeLevels: Object.assign({}, defaultMetaUpgradeLevels),
+    dailyChallengeRewardClaimDate: "",
+    settings: Object.assign({}, defaultSettings)
 };
 /**
  * Local persistence for meta progress and debug switches.
  */
 class SaveManager {
     constructor() {
-        this.data = Object.assign({}, defaultSaveData);
+        this.data = this.createDefaultSaveData();
     }
     static getInstance() {
         if (!SaveManager.instance) {
@@ -136,15 +354,14 @@ class SaveManager {
             const raw = wx.getStorageSync(SAVE_KEY);
             if (raw) {
                 const parsed = JSON.parse(raw);
-                this.data = Object.assign(Object.assign(Object.assign({}, defaultSaveData), parsed), { unlockedEvolutionIds: Array.isArray(parsed.unlockedEvolutionIds)
-                        ? parsed.unlockedEvolutionIds
-                        : [], dailyChestClaimDate: typeof parsed.dailyChestClaimDate === "string" ? parsed.dailyChestClaimDate : "", freeStartBuffCharges: typeof parsed.freeStartBuffCharges === "number" && parsed.freeStartBuffCharges > 0
-                        ? Math.floor(parsed.freeStartBuffCharges)
-                        : 0, dna: typeof parsed.dna === "number" && parsed.dna > 0 ? Math.floor(parsed.dna) : 0, weaponMasteryExp: this.sanitizeMasteryExp(parsed.weaponMasteryExp), dailyQuestDate: typeof parsed.dailyQuestDate === "string" ? parsed.dailyQuestDate : "", dailyQuests: this.sanitizeDailyQuests(parsed.dailyQuests), metaUpgradeLevels: this.sanitizeMetaUpgradeLevels(parsed.metaUpgradeLevels) });
+                const migrated = this.migrateSaveData(parsed);
+                this.data = Object.assign(Object.assign(Object.assign({}, this.createDefaultSaveData()), migrated), { version: SAVE_VERSION, unlockedEvolutionIds: Array.isArray(migrated.unlockedEvolutionIds)
+                        ? migrated.unlockedEvolutionIds.filter((item) => typeof item === "string")
+                        : [], storyUnlockedChapterLevel: Math.max(1, this.sanitizeNonNegative(migrated.storyUnlockedChapterLevel) || 1), storyChapterBestStars: this.sanitizeStoryChapterBestStars(migrated.storyChapterBestStars), storyChapterFirstClearIds: this.sanitizeStoryChapterFirstClearIds(migrated.storyChapterFirstClearIds), bestSurvivalTime: this.sanitizeNonNegative(migrated.bestSurvivalTime), totalKills: this.sanitizeNonNegative(migrated.totalKills), totalRuns: this.sanitizeNonNegative(migrated.totalRuns), tutorialSeen: !!migrated.tutorialSeen, debugMode: !!migrated.debugMode, dailyChestClaimDate: typeof migrated.dailyChestClaimDate === "string" ? migrated.dailyChestClaimDate : "", dna: this.sanitizeNonNegative(migrated.dna), weaponFragments: this.sanitizeWeaponFragments(migrated.weaponFragments), weaponUpgradeLevels: this.sanitizeWeaponUpgradeLevels(migrated.weaponUpgradeLevels), weaponMasteryExp: this.sanitizeMasteryExp(migrated.weaponMasteryExp), dailyQuestDate: typeof migrated.dailyQuestDate === "string" ? migrated.dailyQuestDate : "", dailyQuests: this.sanitizeDailyQuests(migrated.dailyQuests), metaUpgradeLevels: this.sanitizeMetaUpgradeLevels(migrated.metaUpgradeLevels), dailyChallengeRewardClaimDate: typeof migrated.dailyChallengeRewardClaimDate === "string" ? migrated.dailyChallengeRewardClaimDate : "", settings: this.sanitizeSettings(migrated.settings) });
             }
         }
         catch (error) {
-            this.data = Object.assign({}, defaultSaveData);
+            this.data = this.createDefaultSaveData();
         }
         this.ensureDailyQuests();
     }
@@ -169,10 +386,91 @@ class SaveManager {
             this.save();
         }
     }
+    getUnlockedStoryChapterLevel() {
+        return Math.max(1, Math.floor(this.data.storyUnlockedChapterLevel || 1));
+    }
+    isStoryChapterUnlocked(chapterLevel) {
+        return Math.max(1, Math.floor(chapterLevel || 1)) <= this.getUnlockedStoryChapterLevel();
+    }
+    unlockStoryChapter(chapterLevel) {
+        const target = Math.max(1, Math.floor(chapterLevel || 1));
+        if (target <= this.getUnlockedStoryChapterLevel()) {
+            return {
+                changed: false,
+                unlockedLevel: this.getUnlockedStoryChapterLevel()
+            };
+        }
+        this.data.storyUnlockedChapterLevel = target;
+        this.save();
+        return {
+            changed: true,
+            unlockedLevel: target
+        };
+    }
+    getStoryChapterBestStars(chapterId) {
+        const value = this.data.storyChapterBestStars[chapterId];
+        if (typeof value !== "number" || !Number.isFinite(value)) {
+            return 0;
+        }
+        return Math.max(0, Math.min(3, Math.floor(value)));
+    }
+    setStoryChapterBestStars(chapterId, stars) {
+        if (!chapterId) {
+            return {
+                updated: false,
+                bestStars: 0
+            };
+        }
+        const safeStars = Math.max(0, Math.min(3, Math.floor(stars || 0)));
+        const before = this.getStoryChapterBestStars(chapterId);
+        if (safeStars <= before) {
+            return {
+                updated: false,
+                bestStars: before
+            };
+        }
+        this.data.storyChapterBestStars[chapterId] = safeStars;
+        this.save();
+        return {
+            updated: true,
+            bestStars: safeStars
+        };
+    }
+    isStoryChapterFirstCleared(chapterId) {
+        if (!chapterId) {
+            return false;
+        }
+        return this.data.storyChapterFirstClearIds.indexOf(chapterId) >= 0;
+    }
+    markStoryChapterFirstCleared(chapterId) {
+        if (!chapterId || this.isStoryChapterFirstCleared(chapterId)) {
+            return false;
+        }
+        this.data.storyChapterFirstClearIds.push(chapterId);
+        this.save();
+        return true;
+    }
+    estimatePlayerPower() {
+        const basePower = 95;
+        const metaLevels = this.data.metaUpgradeLevels || defaultMetaUpgradeLevels;
+        const damagePower = Math.max(0, Math.floor(metaLevels.damage || 0)) * 34;
+        const hpPower = Math.max(0, Math.floor(metaLevels.maxHp || 0)) * 30;
+        const speedPower = Math.max(0, Math.floor(metaLevels.moveSpeed || 0)) * 26;
+        const pickupPower = Math.max(0, Math.floor(metaLevels.pickup || 0)) * 18;
+        let weaponPower = 0;
+        let masteryPower = 0;
+        for (const baseWeaponId of weaponConfig_1.baseWeaponIds) {
+            const upgradeLevel = Math.max(0, Math.floor(this.data.weaponUpgradeLevels[baseWeaponId] || 0));
+            const masteryLevel = this.getWeaponMasteryInfo(baseWeaponId).level;
+            weaponPower += upgradeLevel * 44;
+            masteryPower += Math.max(0, masteryLevel - 1) * 8;
+        }
+        return Math.max(basePower, Math.floor(basePower + damagePower + hpPower + speedPower + pickupPower + weaponPower + masteryPower));
+    }
     appendRunStats(survivalTime, kills) {
         this.data.totalRuns += 1;
-        this.data.totalKills += kills;
-        this.data.bestSurvivalTime = Math.max(this.data.bestSurvivalTime, survivalTime);
+        this.data.totalKills += Math.max(0, Math.floor(kills));
+        this.data.bestSurvivalTime = Math.max(this.data.bestSurvivalTime, Math.max(0, Math.floor(survivalTime)));
         this.save();
     }
     markTutorialSeen() {
@@ -180,36 +478,238 @@ class SaveManager {
         this.save();
     }
     setDebugMode(enabled) {
-        this.data.debugMode = enabled;
+        this.data.debugMode = !!enabled;
+        this.save();
+    }
+    getSettings() {
+        return Object.assign({}, this.data.settings);
+    }
+    setSfxEnabled(enabled) {
+        this.data.settings.sfxEnabled = !!enabled;
+        this.save();
+    }
+    setVibrationEnabled(enabled) {
+        this.data.settings.vibrationEnabled = !!enabled;
+        this.save();
+    }
+    setPerformanceMode(mode) {
+        this.data.settings.performanceMode = this.toPerformanceMode(mode) || defaultSettings.performanceMode;
+        this.save();
+    }
+    setMoveSensitivity(value) {
+        this.data.settings.moveSensitivity = this.clampMoveSensitivity(value);
         this.save();
     }
     resetSave() {
-        this.data = Object.assign(Object.assign({}, defaultSaveData), { metaUpgradeLevels: Object.assign({}, defaultMetaUpgradeLevels) });
+        this.data = this.createDefaultSaveData();
         this.ensureDailyQuests();
         this.save();
     }
     canClaimDailyChest(now = new Date()) {
         return this.data.dailyChestClaimDate !== this.getDateKey(now);
     }
-    claimDailyChest(gain, now = new Date()) {
+    claimDailyChest(now = new Date()) {
         if (!this.canClaimDailyChest(now)) {
-            return false;
+            return {
+                ok: false,
+                rewards: []
+            };
+        }
+        const rewards = this.rollDailyChestFragmentReward();
+        for (const reward of rewards) {
+            this.data.weaponFragments[reward.baseWeaponId] = this.getWeaponFragments(reward.baseWeaponId) + reward.amount;
         }
         this.data.dailyChestClaimDate = this.getDateKey(now);
-        this.data.freeStartBuffCharges += Math.max(0, Math.floor(gain));
         this.save();
-        return true;
+        return {
+            ok: true,
+            rewards
+        };
     }
-    getFreeStartBuffCharges() {
-        return Math.max(0, this.data.freeStartBuffCharges || 0);
-    }
-    consumeFreeStartBuffCharge() {
-        if (this.data.freeStartBuffCharges <= 0) {
-            return false;
+    rollDailyChestFragmentReward() {
+        const rewards = [];
+        const first = this.pickRandomBaseWeapon();
+        rewards.push({
+            baseWeaponId: first,
+            amount: 6 + Math.floor(Math.random() * 5)
+        });
+        if (Math.random() < 0.42) {
+            const second = this.pickRandomBaseWeapon(first);
+            rewards.push({
+                baseWeaponId: second,
+                amount: 3 + Math.floor(Math.random() * 4)
+            });
         }
-        this.data.freeStartBuffCharges -= 1;
+        return rewards;
+    }
+    grantRunWeaponFragments(baseWeaponIdsInRun, survivalTime, kills, evolvedBaseIds = []) {
+        if (baseWeaponIdsInRun.length <= 0) {
+            return [];
+        }
+        const uniqueBaseIds = Array.from(new Set(baseWeaponIdsInRun.filter((id) => weaponConfig_1.baseWeaponIds.indexOf(id) >= 0)));
+        if (uniqueBaseIds.length <= 0) {
+            return [];
+        }
+        const evolvedSet = new Set(evolvedBaseIds);
+        const baseGain = Math.max(1, 1 + Math.floor(survivalTime / 95) + Math.floor(kills / 70));
+        const rewards = [];
+        for (const baseId of uniqueBaseIds) {
+            let gain = baseGain;
+            if (evolvedSet.has(baseId)) {
+                gain += 2;
+            }
+            if (kills >= 180) {
+                gain += 1;
+            }
+            if (Math.random() < 0.25) {
+                gain += 1;
+            }
+            rewards.push({
+                baseWeaponId: baseId,
+                amount: Math.max(1, gain)
+            });
+        }
+        for (const reward of rewards) {
+            this.data.weaponFragments[reward.baseWeaponId] = this.getWeaponFragments(reward.baseWeaponId) + reward.amount;
+        }
         this.save();
-        return true;
+        return rewards;
+    }
+    addWeaponFragments(baseWeaponId, amount) {
+        if (weaponConfig_1.baseWeaponIds.indexOf(baseWeaponId) < 0) {
+            return 0;
+        }
+        const gain = Math.max(0, Math.floor(amount));
+        if (gain <= 0) {
+            return this.getWeaponFragments(baseWeaponId);
+        }
+        this.data.weaponFragments[baseWeaponId] = this.getWeaponFragments(baseWeaponId) + gain;
+        this.save();
+        return this.data.weaponFragments[baseWeaponId];
+    }
+    addWeaponFragmentBundle(rewards) {
+        let changed = false;
+        for (const reward of rewards) {
+            if (!reward || weaponConfig_1.baseWeaponIds.indexOf(reward.baseWeaponId) < 0) {
+                continue;
+            }
+            const gain = Math.max(0, Math.floor(reward.amount));
+            if (gain <= 0) {
+                continue;
+            }
+            this.data.weaponFragments[reward.baseWeaponId] = this.getWeaponFragments(reward.baseWeaponId) + gain;
+            changed = true;
+        }
+        if (changed) {
+            this.save();
+        }
+    }
+    getWeaponFragments(baseWeaponId) {
+        return Math.max(0, Math.floor(this.data.weaponFragments[baseWeaponId] || 0));
+    }
+    getWeaponUpgradeInfo(baseWeaponId) {
+        const template = this.getWeaponUpgradeTemplate(baseWeaponId);
+        if (!template) {
+            return {
+                baseWeaponId,
+                level: 0,
+                maxLevel: 0,
+                fragments: this.getWeaponFragments(baseWeaponId),
+                nextCost: 0,
+                canUpgrade: false,
+                damageBonus: 0,
+                unlockedSkills: [],
+                nextSkill: null
+            };
+        }
+        const level = Math.max(0, Math.min(template.maxLevel, Math.floor(this.data.weaponUpgradeLevels[baseWeaponId] || 0)));
+        const fragments = this.getWeaponFragments(baseWeaponId);
+        const nextCost = level >= template.maxLevel ? 0 : template.costs[level] || 0;
+        const unlockedSkills = template.skills.filter((item) => level >= item.unlockLevel);
+        const nextSkill = template.skills.find((item) => item.unlockLevel > level) || null;
+        return {
+            baseWeaponId,
+            level,
+            maxLevel: template.maxLevel,
+            fragments,
+            nextCost,
+            canUpgrade: level < template.maxLevel && nextCost > 0 && fragments >= nextCost,
+            damageBonus: level * template.damageBonusPerLevel,
+            unlockedSkills,
+            nextSkill
+        };
+    }
+    getWeaponUpgradeInfos() {
+        return weaponConfig_1.baseWeaponIds.map((baseId) => this.getWeaponUpgradeInfo(baseId));
+    }
+    tryUpgradeWeapon(baseWeaponId) {
+        const template = this.getWeaponUpgradeTemplate(baseWeaponId);
+        if (!template) {
+            const info = this.getWeaponUpgradeInfo(baseWeaponId);
+            return {
+                ok: false,
+                reason: "invalid",
+                cost: 0,
+                level: info.level,
+                unlockedSkills: [],
+                info
+            };
+        }
+        const level = this.getWeaponUpgradeInfo(baseWeaponId).level;
+        if (level >= template.maxLevel) {
+            const info = this.getWeaponUpgradeInfo(baseWeaponId);
+            return {
+                ok: false,
+                reason: "max",
+                cost: 0,
+                level: info.level,
+                unlockedSkills: [],
+                info
+            };
+        }
+        const cost = template.costs[level] || 0;
+        if (this.getWeaponFragments(baseWeaponId) < cost) {
+            const info = this.getWeaponUpgradeInfo(baseWeaponId);
+            return {
+                ok: false,
+                reason: "fragment",
+                cost,
+                level: info.level,
+                unlockedSkills: [],
+                info
+            };
+        }
+        this.data.weaponFragments[baseWeaponId] = this.getWeaponFragments(baseWeaponId) - cost;
+        this.data.weaponUpgradeLevels[baseWeaponId] = level + 1;
+        this.save();
+        const info = this.getWeaponUpgradeInfo(baseWeaponId);
+        const unlockedSkills = info.unlockedSkills.filter((item) => item.unlockLevel === info.level);
+        return {
+            ok: true,
+            cost,
+            level: info.level,
+            unlockedSkills,
+            info
+        };
+    }
+    getWeaponDamageBonus(baseWeaponId) {
+        return this.getWeaponUpgradeInfo(baseWeaponId).damageBonus;
+    }
+    getWeaponUnlockedSkills(baseWeaponId) {
+        return this.getWeaponUpgradeInfo(baseWeaponId).unlockedSkills;
+    }
+    getWeaponUnlockedSkillIds(baseWeaponId) {
+        return this.getWeaponUpgradeInfo(baseWeaponId).unlockedSkills.map((item) => item.id);
+    }
+    canClaimDailyChallengeReward(now = new Date()) {
+        return this.data.dailyChallengeRewardClaimDate !== this.getDateKey(now);
+    }
+    isDailyChallengeRewardClaimed(now = new Date()) {
+        return !this.canClaimDailyChallengeReward(now);
+    }
+    markDailyChallengeRewardClaimed(now = new Date()) {
+        this.data.dailyChallengeRewardClaimDate = this.getDateKey(now);
+        this.save();
     }
     unlockAllEvolutionDebug(allEvolutionIds) {
         this.data.unlockedEvolutionIds = [...allEvolutionIds];
@@ -339,12 +839,12 @@ class SaveManager {
     getWeaponMasteryExp(baseWeaponId) {
         return Math.max(0, Math.floor(this.data.weaponMasteryExp[baseWeaponId] || 0));
     }
-    addRunWeaponMastery(baseWeaponIds, survivalTime, kills, evolvedBaseIds = []) {
+    addRunWeaponMastery(baseWeaponIdsInRun, survivalTime, kills, evolvedBaseIds = []) {
         const result = [];
-        if (baseWeaponIds.length <= 0) {
+        if (baseWeaponIdsInRun.length <= 0) {
             return result;
         }
-        const uniqueBaseIds = Array.from(new Set(baseWeaponIds));
+        const uniqueBaseIds = Array.from(new Set(baseWeaponIdsInRun));
         const evolvedSet = new Set(evolvedBaseIds);
         for (const baseWeaponId of uniqueBaseIds) {
             const before = this.getWeaponMasteryInfo(baseWeaponId);
@@ -410,23 +910,89 @@ class SaveManager {
         this.ensureDailyQuests(now);
         const quest = this.data.dailyQuests.find((item) => item.id === questId);
         if (!quest || quest.claimed || quest.progress < quest.target) {
-            return { ok: false, rewardDna: 0, rewardBuffCharge: 0 };
+            return { ok: false, rewardDna: 0 };
         }
         quest.claimed = true;
         const rewardDna = Math.max(0, Math.floor(quest.rewardDna));
-        const rewardBuffCharge = Math.max(0, Math.floor(quest.rewardBuffCharge));
         if (rewardDna > 0) {
             this.data.dna += rewardDna;
-        }
-        if (rewardBuffCharge > 0) {
-            this.data.freeStartBuffCharges += rewardBuffCharge;
         }
         this.save();
         return {
             ok: true,
-            rewardDna,
-            rewardBuffCharge
+            rewardDna
         };
+    }
+    migrateSaveData(raw) {
+        if (!raw || typeof raw !== "object") {
+            return {};
+        }
+        let out = Object.assign({}, raw);
+        const version = this.detectSaveVersion(out);
+        if (version < 2) {
+            out = this.migrateV1ToV2(out);
+        }
+        if (version < 3) {
+            out = this.migrateV2ToV3(out);
+        }
+        out.version = SAVE_VERSION;
+        return out;
+    }
+    detectSaveVersion(raw) {
+        if (typeof raw.version === "number" && Number.isFinite(raw.version)) {
+            return Math.max(1, Math.floor(raw.version));
+        }
+        if (raw.storyUnlockedChapterLevel || raw.storyChapterBestStars || raw.storyChapterFirstClearIds) {
+            return 3;
+        }
+        if (raw.weaponFragments || raw.weaponUpgradeLevels) {
+            return 2;
+        }
+        return 1;
+    }
+    migrateV1ToV2(raw) {
+        const out = Object.assign({}, raw);
+        if (!out.weaponFragments || typeof out.weaponFragments !== "object") {
+            out.weaponFragments = createEmptyWeaponFragments();
+        }
+        if (!out.weaponUpgradeLevels || typeof out.weaponUpgradeLevels !== "object") {
+            out.weaponUpgradeLevels = createEmptyWeaponUpgradeLevels();
+        }
+        const legacyStartBuffCharges = typeof out.freeStartBuffCharges === "number" && Number.isFinite(out.freeStartBuffCharges)
+            ? Math.max(0, Math.floor(out.freeStartBuffCharges))
+            : 0;
+        if (legacyStartBuffCharges > 0) {
+            const baseDna = typeof out.dna === "number" && Number.isFinite(out.dna) ? Math.max(0, Math.floor(out.dna)) : 0;
+            out.dna = baseDna + legacyStartBuffCharges * LEGACY_START_BUFF_DNA_COMPENSATION;
+        }
+        delete out.freeStartBuffCharges;
+        return out;
+    }
+    migrateV2ToV3(raw) {
+        const out = Object.assign({}, raw);
+        if (typeof out.storyUnlockedChapterLevel !== "number" || !Number.isFinite(out.storyUnlockedChapterLevel)) {
+            out.storyUnlockedChapterLevel = 1;
+        }
+        if (!out.storyChapterBestStars || typeof out.storyChapterBestStars !== "object") {
+            out.storyChapterBestStars = createEmptyStoryChapterStars();
+        }
+        if (!Array.isArray(out.storyChapterFirstClearIds)) {
+            out.storyChapterFirstClearIds = [];
+        }
+        return out;
+    }
+    createDefaultSaveData() {
+        return Object.assign(Object.assign({}, defaultSaveData), { version: SAVE_VERSION, storyUnlockedChapterLevel: 1, storyChapterBestStars: createEmptyStoryChapterStars(), storyChapterFirstClearIds: [], weaponFragments: createEmptyWeaponFragments(), weaponUpgradeLevels: createEmptyWeaponUpgradeLevels(), metaUpgradeLevels: Object.assign({}, defaultMetaUpgradeLevels), settings: Object.assign({}, defaultSettings) });
+    }
+    getWeaponUpgradeTemplate(baseWeaponId) {
+        return weaponUpgradeTemplates[baseWeaponId] || null;
+    }
+    pickRandomBaseWeapon(exceptId = "") {
+        const candidates = weaponConfig_1.baseWeaponIds.filter((id) => id !== exceptId);
+        if (candidates.length <= 0) {
+            return weaponConfig_1.baseWeaponIds[0];
+        }
+        return candidates[Math.floor(Math.random() * candidates.length)];
     }
     getMetaUpgradeLevel(id) {
         return Math.max(0, Math.floor(this.data.metaUpgradeLevels[id] || 0));
@@ -516,7 +1082,6 @@ class SaveManager {
                 target: template.target,
                 progress: 0,
                 rewardDna: template.rewardDna,
-                rewardBuffCharge: template.rewardBuffCharge,
                 claimed: false
             };
         });
@@ -536,6 +1101,34 @@ class SaveManager {
         }
         return Math.max(0, Math.floor(summary.fusionCount));
     }
+    sanitizeWeaponFragments(raw) {
+        const map = createEmptyWeaponFragments();
+        if (!raw || typeof raw !== "object") {
+            return map;
+        }
+        for (const baseId of weaponConfig_1.baseWeaponIds) {
+            const value = raw[baseId];
+            if (typeof value === "number" && value > 0) {
+                map[baseId] = Math.floor(value);
+            }
+        }
+        return map;
+    }
+    sanitizeWeaponUpgradeLevels(raw) {
+        const map = createEmptyWeaponUpgradeLevels();
+        if (!raw || typeof raw !== "object") {
+            return map;
+        }
+        for (const baseId of weaponConfig_1.baseWeaponIds) {
+            const value = raw[baseId];
+            const template = this.getWeaponUpgradeTemplate(baseId);
+            if (typeof value !== "number" || !template) {
+                continue;
+            }
+            map[baseId] = Math.max(0, Math.min(template.maxLevel, Math.floor(value)));
+        }
+        return map;
+    }
     sanitizeMasteryExp(raw) {
         if (!raw || typeof raw !== "object") {
             return {};
@@ -548,6 +1141,29 @@ class SaveManager {
             }
         });
         return map;
+    }
+    sanitizeStoryChapterBestStars(raw) {
+        const out = {};
+        if (!raw || typeof raw !== "object") {
+            return out;
+        }
+        Object.keys(raw).forEach((key) => {
+            const value = raw[key];
+            if (typeof value !== "number" || !Number.isFinite(value)) {
+                return;
+            }
+            out[key] = Math.max(0, Math.min(3, Math.floor(value)));
+        });
+        return out;
+    }
+    sanitizeStoryChapterFirstClearIds(raw) {
+        if (!Array.isArray(raw)) {
+            return [];
+        }
+        return Array.from(new Set(raw
+            .filter((item) => typeof item === "string")
+            .map((item) => item.trim())
+            .filter((item) => item.length > 0)));
     }
     sanitizeDailyQuests(raw) {
         if (!Array.isArray(raw)) {
@@ -570,7 +1186,6 @@ class SaveManager {
                 target: Math.max(1, Math.floor(typeof item.target === "number" ? item.target : 1)),
                 progress: Math.max(0, Math.floor(typeof item.progress === "number" ? item.progress : 0)),
                 rewardDna: Math.max(0, Math.floor(typeof item.rewardDna === "number" ? item.rewardDna : 0)),
-                rewardBuffCharge: Math.max(0, Math.floor(typeof item.rewardBuffCharge === "number" ? item.rewardBuffCharge : 0)),
                 claimed: !!item.claimed
             });
         }
@@ -590,6 +1205,23 @@ class SaveManager {
         }
         return safe;
     }
+    sanitizeSettings(raw) {
+        if (!raw || typeof raw !== "object") {
+            return Object.assign({}, defaultSettings);
+        }
+        return {
+            sfxEnabled: raw.sfxEnabled !== false,
+            vibrationEnabled: raw.vibrationEnabled !== false,
+            performanceMode: this.toPerformanceMode(raw.performanceMode) || defaultSettings.performanceMode,
+            moveSensitivity: this.clampMoveSensitivity(typeof raw.moveSensitivity === "number" ? raw.moveSensitivity : defaultSettings.moveSensitivity)
+        };
+    }
+    sanitizeNonNegative(value) {
+        if (typeof value !== "number" || !Number.isFinite(value)) {
+            return 0;
+        }
+        return Math.max(0, Math.floor(value));
+    }
     toQuestType(type) {
         if (type === "kill" || type === "survive" || type === "evolution" || type === "boss_batch" || type === "fusion") {
             return type;
@@ -601,6 +1233,15 @@ class SaveManager {
             return type;
         }
         return null;
+    }
+    toPerformanceMode(mode) {
+        if (mode === "quality" || mode === "balanced" || mode === "performance") {
+            return mode;
+        }
+        return null;
+    }
+    clampMoveSensitivity(value) {
+        return Math.max(0.7, Math.min(1.6, Number.isFinite(value) ? value : 1));
     }
     hashString(text) {
         let hash = 2166136261;

@@ -10,6 +10,26 @@ class EffectSystem {
         this.floatingTexts = [];
         this.particles = [];
         this.ringPulses = [];
+        this.particleDensity = 1;
+        this.maxParticles = 320;
+        this.maxRings = 18;
+    }
+    setPerformanceMode(mode) {
+        if (mode === "quality") {
+            this.particleDensity = 1;
+            this.maxParticles = 420;
+            this.maxRings = 24;
+            return;
+        }
+        if (mode === "performance") {
+            this.particleDensity = 0.55;
+            this.maxParticles = 170;
+            this.maxRings = 10;
+            return;
+        }
+        this.particleDensity = 0.78;
+        this.maxParticles = 280;
+        this.maxRings = 16;
     }
     addFloatingText(x, y, text, color = "#ffffff") {
         this.floatingTexts.push({
@@ -22,8 +42,11 @@ class EffectSystem {
         });
     }
     burst(x, y, color, count = 8) {
-        for (let i = 0; i < count; i += 1) {
-            const angle = (Math.PI * 2 * i) / count + Math.random() * 0.5;
+        const scaledCount = Math.max(1, Math.round(count * this.particleDensity));
+        const remain = Math.max(0, this.maxParticles - this.particles.length);
+        const spawnCount = Math.min(scaledCount, remain);
+        for (let i = 0; i < spawnCount; i += 1) {
+            const angle = (Math.PI * 2 * i) / Math.max(1, spawnCount) + Math.random() * 0.5;
             const speed = 40 + Math.random() * 140;
             this.particles.push({
                 id: fxId++,
@@ -38,6 +61,9 @@ class EffectSystem {
         }
     }
     pulseRing(x, y, color, startRadius = 12, endRadius = 120, duration = 0.48, lineWidth = 4) {
+        if (this.ringPulses.length >= this.maxRings) {
+            this.ringPulses.shift();
+        }
         this.ringPulses.push({
             id: fxId++,
             x,
@@ -56,7 +82,7 @@ class EffectSystem {
             fx.life -= dt;
             fx.y -= 22 * dt;
             if (fx.life <= 0) {
-                this.floatingTexts.splice(i, 1);
+                this.removeFloatingTextAt(i);
             }
         }
         for (let i = this.particles.length - 1; i >= 0; i -= 1) {
@@ -67,7 +93,7 @@ class EffectSystem {
             p.vx *= 0.96;
             p.vy *= 0.96;
             if (p.life <= 0) {
-                this.particles.splice(i, 1);
+                this.removeParticleAt(i);
             }
         }
         for (let i = this.ringPulses.length - 1; i >= 0; i -= 1) {
@@ -76,9 +102,39 @@ class EffectSystem {
             const progress = 1 - Math.max(0, ring.life / Math.max(0.001, ring.maxLife));
             ring.radius += (ring.endRadius - ring.radius) * Math.min(1, progress * 0.45 + 0.18);
             if (ring.life <= 0) {
-                this.ringPulses.splice(i, 1);
+                this.removeRingAt(i);
             }
         }
+    }
+    removeFloatingTextAt(index) {
+        if (index < 0 || index >= this.floatingTexts.length) {
+            return;
+        }
+        const last = this.floatingTexts.length - 1;
+        if (index !== last) {
+            this.floatingTexts[index] = this.floatingTexts[last];
+        }
+        this.floatingTexts.pop();
+    }
+    removeParticleAt(index) {
+        if (index < 0 || index >= this.particles.length) {
+            return;
+        }
+        const last = this.particles.length - 1;
+        if (index !== last) {
+            this.particles[index] = this.particles[last];
+        }
+        this.particles.pop();
+    }
+    removeRingAt(index) {
+        if (index < 0 || index >= this.ringPulses.length) {
+            return;
+        }
+        const last = this.ringPulses.length - 1;
+        if (index !== last) {
+            this.ringPulses[index] = this.ringPulses[last];
+        }
+        this.ringPulses.pop();
     }
     render(ctx) {
         for (const p of this.particles) {
@@ -99,7 +155,7 @@ class EffectSystem {
         for (const fx of this.floatingTexts) {
             ctx.globalAlpha = Math.max(0, fx.life / 0.8);
             ctx.fillStyle = fx.color;
-            ctx.font = "16px sans-serif";
+            ctx.font = "16px Microsoft YaHei";
             ctx.fillText(fx.text, fx.x, fx.y);
         }
         ctx.globalAlpha = 1;
